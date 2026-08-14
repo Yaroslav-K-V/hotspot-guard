@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>HotspotGuard</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.yaroslavkv.hotspotguard</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>HotspotGuard</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+
+	<!-- Menu bar only: no Dock icon, no app switcher entry. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<!--
+	    Why a Wi-Fi utility asks for Location.
+
+	    The set of Wi-Fi networks around you pinpoints your position to within a
+	    street or two — that is exactly how Apple's own location database works.
+	    So since macOS 14 (Sonoma) the system gates any API that exposes
+	    nearby-network information behind Location Services. Without this
+	    permission CoreWLAN degrades quietly rather than loudly:
+
+	      * CWInterface.ssid() returns nil even while connected, and
+	      * CWInterface.scanForNetworks(...) fails with "not permitted",
+	        which blocks the reconnect path entirely.
+
+	    HotspotGuard never reads coordinates and has no location code beyond the
+	    authorization request itself.
+
+	    NSLocationUsageDescription is the legacy key; macOS still reads it for
+	    some prompts, so both are supplied.
+	-->
+	<key>NSLocationUsageDescription</key>
+	<string>HotspotGuard needs Location access because macOS requires it before any app can read the current Wi-Fi network name or scan for your hotspot. Your location is never read or stored.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>HotspotGuard needs Location access because macOS requires it before any app can read the current Wi-Fi network name or scan for your hotspot. Your location is never read or stored.</string>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>HotspotGuard</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+</dict>
+</plist>
