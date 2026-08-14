@@ -13,9 +13,13 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 0) {
             StatusHeader(model: model)
             Divider()
-            ConfigurationSection(model: model, settings: model.settings)
+            ConfigurationSection(
+                model: model,
+                settings: model.settings,
+                credentials: model.credentials
+            )
             Divider()
-            StatisticsSection(manager: manager)
+            StatisticsSection(manager: manager, settings: model.settings)
             Divider()
             RecentEventsSection(log: model.log)
             Divider()
@@ -80,6 +84,7 @@ private struct StatusHeader: View {
 private struct ConfigurationSection: View {
     @Bindable var model: AppModel
     @Bindable var settings: AppSettings
+    @Bindable var credentials: CredentialsStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -95,8 +100,8 @@ private struct ConfigurationSection: View {
             LabeledField(label: "Password") {
                 HStack(spacing: 6) {
                     SecureField(
-                        model.hasStoredPassword ? "Saved in Keychain" : "Password",
-                        text: $model.passwordDraft
+                        credentials.hasStoredPassword ? "Saved in Keychain" : "Password",
+                        text: $credentials.draft
                     )
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
@@ -108,8 +113,8 @@ private struct ConfigurationSection: View {
                         Image(systemName: "checkmark.circle.fill")
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(model.passwordDraft.isEmpty ? Color.secondary : Color.green)
-                    .disabled(model.passwordDraft.isEmpty)
+                    .foregroundStyle(credentials.hasUnsavedDraft ? Color.green : Color.secondary)
+                    .disabled(!credentials.hasUnsavedDraft)
                     .help("Save password to Keychain")
                 }
             }
@@ -141,7 +146,7 @@ private struct ConfigurationSection: View {
         .onDisappear {
             // Safety net: typing a password and closing the menu without
             // pressing Return used to discard it silently.
-            if !model.passwordDraft.isEmpty {
+            if credentials.hasUnsavedDraft {
                 model.savePassword()
             }
         }
@@ -151,14 +156,14 @@ private struct ConfigurationSection: View {
     /// identical whether the password is saved or merely typed.
     @ViewBuilder
     private var passwordStatus: some View {
-        if let keychainError = model.keychainError {
-            statusLine(keychainError, symbol: "exclamationmark.triangle.fill", tint: .red)
-        } else if !model.passwordDraft.isEmpty {
+        if let error = credentials.lastError {
+            statusLine(error, symbol: "exclamationmark.triangle.fill", tint: .red)
+        } else if credentials.hasUnsavedDraft {
             statusLine("Not saved yet — press ⏎ or click ✓",
                        symbol: "pencil.circle.fill", tint: .orange)
-        } else if model.hasStoredPassword {
+        } else if credentials.hasStoredPassword {
             statusLine("Saved in Keychain", symbol: "lock.fill", tint: .green)
-        } else if model.isMissingPassword {
+        } else if credentials.isMissingPassword {
             statusLine("No password saved for this network",
                        symbol: "exclamationmark.triangle.fill", tint: .orange)
         }
@@ -179,6 +184,7 @@ private struct ConfigurationSection: View {
 
 private struct StatisticsSection: View {
     let manager: ConnectionManager
+    let settings: AppSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -189,6 +195,21 @@ private struct StatisticsSection: View {
                 Spacer()
                 Text("\(manager.reconnectCount)")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            }
+
+            // Without this the UI would claim "every 10s" while backoff had
+            // quietly stretched the gap to minutes.
+            if manager.isBackingOff {
+                HStack {
+                    Label("Backing off after \(manager.consecutiveFailures) failures",
+                          systemImage: "tortoise.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Text(Self.intervalText(manager.effectiveCheckInterval))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.orange)
+                }
             }
 
             HStack {
@@ -219,6 +240,13 @@ private struct StatisticsSection: View {
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
+
+    private static func intervalText(_ interval: TimeInterval) -> String {
+        if interval < 60 { return "\(Int(interval))s" }
+        let minutes = Int(interval) / 60
+        let seconds = Int(interval) % 60
+        return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
+    }
 }
 
 // MARK: - Recent events
@@ -290,7 +318,10 @@ private struct ActionsSection: View {
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.small)
-                .disabled(manager.state == .reconnecting || model.settings.ssid.isEmpty)
+                // `isWorking`, not `state == .reconnecting`: a scheduled tick
+                // is busy from the moment it starts probing, well before the
+                // state turns to .reconnecting.
+                .disabled(manager.isWorking || model.settings.ssid.isEmpty)
 
                 Button {
                     manager.isRunning ? manager.stop() : manager.start()

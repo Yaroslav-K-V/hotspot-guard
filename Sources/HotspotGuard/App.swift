@@ -6,44 +6,37 @@ import SwiftUI
 /// Composition root: owns the long-lived objects and wires them together.
 ///
 /// The UI talks to this; this talks to `HotspotGuardCore`. Nothing in Core
-/// knows this type exists.
+/// knows this type exists. Password rules deliberately live in
+/// ``CredentialsStore`` rather than here, so they are covered by tests.
 @MainActor
 @Observable
 final class AppModel {
     let settings: AppSettings
     let log: EventLog
+    let credentials: CredentialsStore
     let manager: ConnectionManager
     let launchAtLogin: LaunchAtLoginController
     @ObservationIgnored let location: LocationAuthorization
 
-    /// Password as typed in the menu, held only until it is written to the
-    /// Keychain. Never persisted to UserDefaults and never written to the log.
-    var passwordDraft: String = ""
-    /// `true` once a password for the current SSID exists in the Keychain.
-    private(set) var hasStoredPassword: Bool = false
-    private(set) var keychainError: String?
-    /// Location status, mirrored for the UI so it can warn when SSID reads fail.
+    /// Location status, mirrored for the UI so it can explain why the network
+    /// name is missing.
     private(set) var isLocationAuthorized: Bool = false
 
     init() {
         let settings = AppSettings()
         let log = EventLog()
+        let credentials = CredentialsStore(settings: settings)
 
         self.settings = settings
         self.log = log
+        self.credentials = credentials
         self.launchAtLogin = LaunchAtLoginController()
         self.location = LocationAuthorization()
         self.manager = ConnectionManager(
             settings: settings,
             log: log,
-            passwordProvider: { [settings] in
-                let ssid = settings.ssid.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !ssid.isEmpty else { return nil }
-                return (try? KeychainHelper.password(account: ssid)) ?? nil
-            }
+            passwordProvider: { [credentials] in credentials.passwordForConnecting() }
         )
-
-        refreshStoredPasswordState()
     }
 
     /// One-time startup work, kicked off from the first view that appears.
@@ -70,63 +63,21 @@ final class AppModel {
         }
     }
 
-    // MARK: - Password handling
-
-    func refreshStoredPasswordState() {
-        let ssid = settings.ssid.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !ssid.isEmpty else {
-            hasStoredPassword = false
-            return
-        }
-        hasStoredPassword = KeychainHelper.hasPassword(account: ssid)
-    }
-
-    /// Writes `passwordDraft` to the Keychain for the current SSID.
+    /// Commits the typed password, logging whatever the store reports.
     func savePassword() {
-        let ssid = settings.ssid.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !ssid.isEmpty else {
-            keychainError = "Enter the SSID first."
-            return
-        }
-
-        do {
-            try KeychainHelper.setPassword(passwordDraft, account: ssid)
-            keychainError = nil
-            passwordDraft = ""
-            refreshStoredPasswordState()
-            log.append(.info, hasStoredPassword
-                ? "Password saved to Keychain for \(ssid)"
-                : "Password cleared for \(ssid)")
-        } catch {
-            keychainError = error.localizedDescription
-            log.append(.error, "Keychain write failed: \(error.localizedDescription)")
+        if let message = credentials.save() {
+            log.append(credentials.lastError == nil ? .info : .error, message)
         }
     }
 
-    /// Called when the SSID field changes — a stored password belongs to one
-    /// SSID, so the "saved" indicator has to follow.
-    ///
-    /// Deliberately does NOT clear `passwordDraft`: this fires on every
-    /// keystroke, so clearing it meant that typing the password first and then
-    /// correcting the SSID silently threw the password away.
     func ssidChanged() {
-        keychainError = nil
-        refreshStoredPasswordState()
-    }
-
-    /// `true` when there is a hotspot configured but nothing to authenticate
-    /// with — the one misconfiguration that looks fine until a reconnect fails.
-    var isMissingPassword: Bool {
-        !settings.ssid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !hasStoredPassword
-            && passwordDraft.isEmpty
+        credentials.ssidChanged()
     }
 }
 
 @main
 struct HotspotGuardApp: App {
     @State private var model = AppModel()
-    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         MenuBarExtra {

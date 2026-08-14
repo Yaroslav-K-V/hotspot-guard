@@ -130,10 +130,13 @@ func makeManager(
     notifier: FakeNotificationPresenter,
     ssid: String = "MyHotspot",
     password: String? = "secret",
+    pathObserver: NetworkPathObserver? = nil,
+    interval: TimeInterval = 10,
     suite: String
 ) -> (ConnectionManager, AppSettings, EventLog) {
     let settings = AppSettings(defaults: makeTestDefaults(suite))
     settings.ssid = ssid
+    settings.checkInterval = interval
     let log = EventLog()
     let manager = ConnectionManager(
         settings: settings,
@@ -141,6 +144,7 @@ func makeManager(
         probe: probe,
         wifi: wifi,
         notifier: notifier,
+        pathObserver: pathObserver,
         probeTimeout: 0.2,
         postAssociationDelay: .milliseconds(1),
         passwordProvider: { password }
@@ -299,6 +303,230 @@ do {
     TestRunner.expect(!manager.isRunning, "reports stopped after stop()")
     TestRunner.expectEqual(manager.state, .idle, "returns to .idle")
     TestRunner.expect(!settings.monitoringEnabled, "persists that monitoring is off")
+}
+
+// MARK: - Reentrancy
+
+TestRunner.suite("ConnectionManager — concurrent work is rejected")
+
+do {
+    // @MainActor serialises threads, not tasks: an async method that suspends
+    // at an await lets another task run on the same actor. This is the bug
+    // where pressing "Reconnect now" during a scheduled tick started a second
+    // scan-and-associate on the same interface.
+    let wifi = FakeWiFiController(currentSSID: nil)
+    let notifier = FakeNotificationPresenter()
+    let gate = GatedProbe(answer: false)
+    let (manager, _, _) = makeManager(
+        probe: gate, wifi: wifi, notifier: notifier, suite: "selftest.reentrancy"
+    )
+
+    // Start a tick and let it suspend inside the probe.
+    let firstTick = Task { await manager.tick() }
+    try? await Task.sleep(for: .milliseconds(50))
+    TestRunner.expect(manager.isWorking, "reports work in flight")
+
+    // Second entrant, while the first is parked mid-probe.
+    await manager.reconnectNow()
+    TestRunner.expectEqual(wifi.associateCallCount, 0,
+                           "a manual reconnect during a tick does not associate")
+
+    gate.open()
+    await firstTick.value
+
+    TestRunner.expect(!manager.isWorking, "clears the flag when done")
+    TestRunner.expectEqual(wifi.associateCallCount, 1,
+                           "exactly one association attempt happened in total")
+
+    // And a plain second tick is refused the same way.
+    let gate2 = GatedProbe(answer: false)
+    let wifi2 = FakeWiFiController(currentSSID: nil)
+    let (manager2, _, _) = makeManager(
+        probe: gate2, wifi: wifi2, notifier: notifier, suite: "selftest.reentrancy2"
+    )
+    let tickA = Task { await manager2.tick() }
+    try? await Task.sleep(for: .milliseconds(50))
+    await manager2.tick()
+    gate2.open()
+    await tickA.value
+    TestRunner.expectEqual(gate2.callCount, 2,
+                           "the refused tick never reached the probe (1 probe + 1 re-probe)")
+}
+
+// MARK: - Backoff
+
+TestRunner.suite("ConnectionManager — backoff")
+
+do {
+    let wifi = FakeWiFiController(currentSSID: nil)
+    wifi.setAssociateError(WiFiError.networkNotFound("MyHotspot"))
+    let notifier = FakeNotificationPresenter()
+    let (manager, settings, log) = makeManager(
+        probe: ScriptedProbe([false]), wifi: wifi, notifier: notifier,
+        interval: 10, suite: "selftest.backoff"
+    )
+
+    TestRunner.expectEqual(manager.effectiveCheckInterval, 10, "starts at the configured interval")
+    TestRunner.expect(!manager.isBackingOff, "is not backing off while healthy")
+
+    await manager.tick() // failure 1
+    TestRunner.expectEqual(manager.effectiveCheckInterval, 10, "first failure does not slow down")
+
+    await manager.tick() // failure 2
+    TestRunner.expectEqual(manager.effectiveCheckInterval, 20, "second failure doubles")
+    TestRunner.expect(manager.isBackingOff, "reports backing off")
+
+    await manager.tick() // 3
+    TestRunner.expectEqual(manager.effectiveCheckInterval, 40, "third failure doubles again")
+
+    for _ in 0..<10 { await manager.tick() }
+    TestRunner.expectEqual(manager.effectiveCheckInterval, Defaults.maximumBackoffInterval,
+                           "caps at the ceiling instead of growing without bound")
+
+    TestRunner.expect(
+        log.events.contains { $0.message.contains("Backing off") } == false,
+        "does not announce backoff outside the run loop"
+    )
+
+    // Recovery returns to the configured interval.
+    wifi.setAssociateError(nil)
+    let (healthy, _, _) = makeManager(
+        probe: ScriptedProbe([true]), wifi: wifi, notifier: notifier,
+        interval: 10, suite: "selftest.backoff.recover"
+    )
+    await healthy.tick()
+    TestRunner.expectEqual(healthy.effectiveCheckInterval, 10, "recovery restores the interval")
+    TestRunner.expect(!healthy.isBackingOff, "stops backing off after recovery")
+
+    // Backoff scales with the user's configured interval, not a fixed base.
+    let (slow, _, _) = makeManager(
+        probe: ScriptedProbe([false]), wifi: wifi, notifier: notifier,
+        interval: 60, suite: "selftest.backoff.slow"
+    )
+    await slow.tick()
+    await slow.tick()
+    TestRunner.expectEqual(slow.effectiveCheckInterval, 120, "doubles the configured 60s")
+    _ = settings
+}
+
+// MARK: - Path monitor
+
+TestRunner.suite("ConnectionManager — network path trigger")
+
+do {
+    let wifi = FakeWiFiController(currentSSID: "MyHotspot")
+    let notifier = FakeNotificationPresenter()
+    let path = ManualPathObserver()
+    let probe = ScriptedProbe([true])
+    let (manager, _, log) = makeManager(
+        probe: probe, wifi: wifi, notifier: notifier,
+        pathObserver: path, suite: "selftest.path"
+    )
+
+    // Not started yet: path events must be ignored entirely.
+    path.emit(isSatisfied: true)
+    try? await Task.sleep(for: .milliseconds(30))
+    TestRunner.expectEqual(probe.callCount, 0, "ignores path events while stopped")
+
+    manager.start()
+    TestRunner.expect(path.isStarted, "subscribes to path changes on start()")
+
+    // Let the loop's own first tick finish so it does not race the assertions.
+    try? await Task.sleep(for: .milliseconds(120))
+    let afterStart = probe.callCount
+
+    path.emit(isSatisfied: true)
+    try? await Task.sleep(for: .milliseconds(120))
+    TestRunner.expect(probe.callCount > afterStart, "a path change pulls the next check forward")
+    TestRunner.expect(
+        log.events.contains { $0.message.contains("Network route") },
+        "logs why the extra check happened"
+    )
+
+    // Rate limiting: a flapping interface must not cause a scan storm.
+    let beforeFlap = probe.callCount
+    for _ in 0..<8 {
+        path.emit(isSatisfied: false)
+        path.emit(isSatisfied: true)
+    }
+    try? await Task.sleep(for: .milliseconds(150))
+    TestRunner.expect(probe.callCount - beforeFlap <= 1,
+                      "coalesces a burst of path changes into at most one check")
+
+    manager.stop()
+    TestRunner.expect(!path.isStarted, "unsubscribes on stop()")
+}
+
+// MARK: - CredentialsStore
+
+TestRunner.suite("CredentialsStore")
+
+do {
+    let settings = AppSettings(defaults: makeTestDefaults("selftest.creds"))
+    settings.ssid = "MyHotspot"
+    let storage = InMemoryPasswordStorage()
+    let store = CredentialsStore(settings: settings, storage: storage)
+
+    TestRunner.expect(!store.hasStoredPassword, "starts with nothing stored")
+    TestRunner.expect(store.isMissingPassword, "flags a configured network with no password")
+    TestRunner.expect(store.passwordForConnecting() == nil, "has nothing to connect with")
+
+    store.draft = "hunter2"
+    TestRunner.expect(store.hasUnsavedDraft, "reports an uncommitted draft")
+    TestRunner.expect(!store.isMissingPassword, "a typed draft is not 'missing'")
+
+    store.save()
+    TestRunner.expect(store.hasStoredPassword, "commits the draft")
+    TestRunner.expect(!store.hasUnsavedDraft, "clears the draft after saving")
+    TestRunner.expectEqual(store.passwordForConnecting(), "hunter2", "supplies it for connecting")
+    TestRunner.expectEqual(try storage.password(for: "MyHotspot"), "hunter2", "reaches storage")
+
+    // The regression that started all this: editing the SSID fires on every
+    // keystroke and used to wipe the typed password.
+    store.draft = "newpassword"
+    store.ssidChanged()
+    TestRunner.expectEqual(store.draft, "newpassword",
+                           "editing the SSID does not discard the typed password")
+
+    // Whitespace in the SSID must not create a second, invisible account.
+    settings.ssid = "  MyHotspot  "
+    store.ssidChanged()
+    TestRunner.expectEqual(store.account, "MyHotspot", "trims the account name")
+    TestRunner.expect(store.hasStoredPassword, "still finds the password after trimming")
+
+    // Switching networks: the indicator has to follow the SSID.
+    settings.ssid = "OtherNetwork"
+    store.ssidChanged()
+    TestRunner.expect(!store.hasStoredPassword, "no password for a different network")
+    TestRunner.expectEqual(store.passwordForConnecting(), nil, "does not leak the other password")
+
+    settings.ssid = "MyHotspot"
+    store.ssidChanged()
+    TestRunner.expect(store.hasStoredPassword, "finds it again when switching back")
+
+    // Empty means delete.
+    store.draft = ""
+    let noop = store.save()
+    TestRunner.expect(noop == nil, "saving an empty draft is a no-op, not a deletion")
+    TestRunner.expect(store.hasStoredPassword, "the stored password survives an empty save")
+
+    // No SSID configured.
+    settings.ssid = ""
+    store.ssidChanged()
+    store.draft = "orphan"
+    store.save()
+    TestRunner.expect(store.lastError != nil, "refuses to save without a network name")
+    TestRunner.expectEqual(store.draft, "orphan", "keeps the draft after a refused save")
+
+    // Storage failure is surfaced, not swallowed.
+    settings.ssid = "MyHotspot"
+    store.ssidChanged()
+    storage.failWrites(true)
+    store.draft = "willfail"
+    let message = store.save()
+    TestRunner.expect(store.lastError != nil, "records a storage error")
+    TestRunner.expect(message?.contains("failed") == true, "returns a loggable failure message")
+    TestRunner.expectEqual(store.draft, "willfail", "keeps the draft so it is not lost")
 }
 
 exit(TestRunner.report())

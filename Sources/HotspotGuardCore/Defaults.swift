@@ -24,4 +24,24 @@ public enum Defaults {
 
     /// Number of events kept in the session history.
     public static let eventLogCapacity = 20
+
+    // MARK: - Backoff
+
+    /// Ceiling on the gap between checks while reconnection keeps failing.
+    ///
+    /// Without backoff, a hotspot that is simply switched off costs a full
+    /// scan-and-associate cycle every `checkInterval` seconds, forever. A Wi-Fi
+    /// scan sweeps the radio across channels: it is not free for the battery,
+    /// and on some adapters it disturbs the current association. Five minutes
+    /// keeps an idle failure state cheap while staying responsive enough —
+    /// and the path monitor short-circuits the wait whenever a route actually
+    /// appears, so a long backoff does not mean a long wait in practice.
+    public static let maximumBackoffInterval: TimeInterval = 300
+
+    /// How many times the interval may double (2^5 = 32x the base interval).
+    public static let maximumBackoffDoublings = 5
+
+    /// Minimum gap between checks triggered by network path changes, so a
+    /// flapping interface cannot drive a scan storm.
+    public static let minimumPathTriggerInterval: TimeInterval = 3
 }

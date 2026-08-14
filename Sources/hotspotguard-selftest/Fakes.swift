@@ -100,6 +100,105 @@ final class FakeNotificationPresenter: NotificationPresenter, @unchecked Sendabl
     }
 }
 
+/// Probe that blocks until released, so a check can be held "in flight" while
+/// the test triggers a second one — the reentrancy scenario.
+///
+/// `autoOpenAfter` matters more than it looks: without it, a regression that
+/// removes the reentrancy guard makes the second entrant park inside this probe
+/// forever, and the suite *hangs* instead of failing. A hung CI job reports far
+/// worse than a red one, so the gate always opens itself eventually and lets
+/// the assertions do the talking.
+final class GatedProbe: ConnectivityProbe, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _isOpen = false
+    private(set) var callCount = 0
+    private let answer: Bool
+    private let autoOpenAfter: Duration
+
+    init(answer: Bool, autoOpenAfter: Duration = .seconds(2)) {
+        self.answer = answer
+        self.autoOpenAfter = autoOpenAfter
+    }
+
+    func open() {
+        lock.lock(); _isOpen = true; lock.unlock()
+    }
+
+    private func isOpen() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _isOpen
+    }
+
+    private func recordCall() {
+        lock.lock(); callCount += 1; lock.unlock()
+    }
+
+    func check(timeout: TimeInterval) async -> Bool {
+        recordCall()
+        let deadline = ContinuousClock.now.advanced(by: autoOpenAfter)
+        while !isOpen() && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return answer
+    }
+}
+
+/// In-memory password storage — no Keychain, no code-signature dependency.
+final class InMemoryPasswordStorage: PasswordStorage, @unchecked Sendable {
+    struct WriteFailure: LocalizedError {
+        var errorDescription: String? { "storage is full of bees" }
+    }
+
+    private let lock = NSLock()
+    private var items: [String: String] = [:]
+    private var shouldFailWrites = false
+
+    init(initial: [String: String] = [:]) {
+        self.items = initial
+    }
+
+    func failWrites(_ shouldFail: Bool) {
+        lock.lock(); shouldFailWrites = shouldFail; lock.unlock()
+    }
+
+    func password(for account: String) throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return items[account]
+    }
+
+    func setPassword(_ password: String, for account: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        if shouldFailWrites { throw WriteFailure() }
+        if password.isEmpty {
+            items.removeValue(forKey: account)
+        } else {
+            items[account] = password
+        }
+    }
+}
+
+/// Path observer the test drives by hand.
+final class ManualPathObserver: NetworkPathObserver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable (Bool) -> Void)?
+    private(set) var isStarted = false
+
+    func start(onChange: @escaping @Sendable (Bool) -> Void) {
+        lock.lock(); handler = onChange; isStarted = true; lock.unlock()
+    }
+
+    func stop() {
+        lock.lock(); handler = nil; isStarted = false; lock.unlock()
+    }
+
+    func emit(isSatisfied: Bool) {
+        lock.lock()
+        let handler = self.handler
+        lock.unlock()
+        handler?(isSatisfied)
+    }
+}
+
 /// Isolated UserDefaults so tests never touch the real preferences.
 func makeTestDefaults(_ name: String) -> UserDefaults {
     let defaults = UserDefaults(suiteName: name)!
