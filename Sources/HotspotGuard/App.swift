@@ -88,6 +88,21 @@ final class AppModel {
         }
 
         log.append(.info, "HotspotGuard started")
+
+        // A configured network with no reachable password fails only during an
+        // outage — exactly when nobody is watching the menu. Say so at launch.
+        let configured = settings.networks.filter(\.isConfigured)
+        let usable = configured.filter { credentials.hasPassword(for: $0.trimmedSSID) }
+        // Counts only: network names are the user's business, not the log's.
+        NSLog("HotspotGuard: \(configured.count) network(s) configured, \(usable.count) with a usable password")
+
+        if !configured.isEmpty, usable.count < configured.count {
+            let missing = configured
+                .filter { !credentials.hasPassword(for: $0.trimmedSSID) }
+                .map(\.trimmedSSID)
+                .joined(separator: ", ")
+            log.append(.warning, "No password saved for: \(missing) — reconnect will skip these")
+        }
         if !isLocationAuthorized {
             log.append(
                 .warning,

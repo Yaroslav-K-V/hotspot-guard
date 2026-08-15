@@ -642,8 +642,8 @@ TestRunner.suite("CoreWLANController.normalize")
 do {
     // The trap this exists for: iOS names hotspots with U+2019, keyboards
     // produce U+0027, and the two are indistinguishable on screen.
-    let typographic = "Yaroslav Krupoder\u{2019}s iPhone"
-    let typed = "Yaroslav Krupoder's iPhone"
+    let typographic = "Anna\u{2019}s iPhone"
+    let typed = "Anna's iPhone"
     TestRunner.expect(typographic != typed, "the two apostrophes really are different strings")
     TestRunner.expectEqual(
         CoreWLANController.normalize(typographic),
@@ -975,8 +975,8 @@ do {
     // produces U+0027, they render identically, and Keychain writes are byte
     // exact — so one network quietly acquired two items.
     TestRunner.expectEqual(
-        SSIDKey.normalize("Yaroslav Krupoder\u{2019}s iPhone"),
-        "Yaroslav Krupoder's iPhone",
+        SSIDKey.normalize("Anna\u{2019}s iPhone"),
+        "Anna's iPhone",
         "folds the typographic apostrophe onto the typed one"
     )
     TestRunner.expectEqual(SSIDKey.normalize("Anna\u{2018}s"), "Anna's", "folds the left quote")
