@@ -44,4 +44,16 @@ public enum Defaults {
     /// Minimum gap between checks triggered by network path changes, so a
     /// flapping interface cannot drive a scan storm.
     public static let minimumPathTriggerInterval: TimeInterval = 3
+
+    /// How many latency samples to keep for the trend line. At a 10s interval
+    /// this is roughly the last five minutes.
+    public static let latencySampleCount = 30
+
+    /// Grace period after waking before checking again, so Wi-Fi has time to
+    /// re-associate and pick up a DHCP lease.
+    public static let postWakeDelay: Duration = .seconds(5)
+
+    /// Latency above which the connection is flagged as degraded. Chosen as
+    /// the point where interactive work (SSH, calls) starts to feel wrong.
+    public static let degradedLatencyMilliseconds = 300
 }

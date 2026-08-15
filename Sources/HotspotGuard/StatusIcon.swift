@@ -29,6 +29,7 @@ enum StatusIcon {
         case .connected: return "Connected"
         case .reconnecting: return "Reconnecting"
         case .disconnected: return "Disconnected"
+        case .captivePortal: return "Sign-in required"
         }
     }
 
@@ -37,6 +38,10 @@ enum StatusIcon {
         case .idle: return .secondaryLabelColor
         case .connected: return .systemGreen
         case .reconnecting: return .systemYellow
+        // Blue, not red: traffic is not flowing, but nothing is broken and
+        // there is a clear action to take. Red would say "reconnect", which is
+        // the one thing that would make it worse.
+        case .captivePortal: return .systemBlue
         case .disconnected: return .systemRed
         }
     }
@@ -46,6 +51,7 @@ enum StatusIcon {
         case .idle: return "wifi"
         case .connected: return "wifi"
         case .reconnecting: return "wifi.exclamationmark"
+        case .captivePortal: return "person.badge.key"
         case .disconnected: return "wifi.slash"
         }
     }

@@ -12,6 +12,12 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             StatusHeader(model: model)
+
+            if manager.state == .captivePortal {
+                Divider()
+                CaptivePortalBanner()
+            }
+
             Divider()
             ConfigurationSection(
                 model: model,
@@ -69,6 +75,9 @@ private struct StatusHeader: View {
     }
 
     private var networkDescription: String {
+        if manager.isAsleep {
+            return "Paused — machine asleep"
+        }
         if let ssid = manager.currentSSID {
             return ssid
         }
@@ -76,6 +85,78 @@ private struct StatusHeader: View {
             return "Network name hidden — Location access needed"
         }
         return "Not connected to Wi-Fi"
+    }
+}
+
+// MARK: - Captive portal
+
+/// Shown instead of the usual error line, because the useful action here is the
+/// opposite of reconnecting.
+private struct CaptivePortalBanner: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "person.badge.key.fill")
+                .foregroundStyle(.blue)
+                .font(.system(size: 12))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("This network needs you to sign in")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Reconnecting would drop the session the login page runs on, so monitoring is holding off.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button("Open login page") {
+                    // Apple's detection URL is what the portal intercepts, so
+                    // it lands on the login page rather than a real site.
+                    if let url = URL(string: "http://captive.apple.com/hotspot-detect.html") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .font(.system(size: 10))
+                .buttonStyle(.link)
+                .padding(.top, 1)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.blue.opacity(0.08))
+    }
+}
+
+/// Sparkline of recent latency samples.
+///
+/// Deliberately unlabelled and tiny: the useful information is the shape — flat,
+/// rising, or spiky — not any individual value.
+private struct LatencySparkline: View {
+    let samples: [Int]
+
+    var body: some View {
+        GeometryReader { geometry in
+            let maximum = max(samples.max() ?? 1, 1)
+            let stepX = samples.count > 1
+                ? geometry.size.width / CGFloat(samples.count - 1)
+                : geometry.size.width
+
+            Path { path in
+                for (index, sample) in samples.enumerated() {
+                    let x = CGFloat(index) * stepX
+                    let ratio = CGFloat(sample) / CGFloat(maximum)
+                    let y = geometry.size.height * (1 - ratio)
+                    if index == 0 {
+                        path.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        path.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+            }
+            .stroke(
+                (samples.last ?? 0) > Defaults.degradedLatencyMilliseconds ? Color.orange : Color.green,
+                style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)
+            )
+        }
     }
 }
 
@@ -209,6 +290,43 @@ private struct StatisticsSection: View {
                     Text(Self.intervalText(manager.effectiveCheckInterval))
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.orange)
+                }
+            }
+
+            // Latency is the early-warning signal: a link usually degrades well
+            // before it drops, and nothing in macOS shows this.
+            if let latency = manager.lastLatencyMilliseconds {
+                HStack(spacing: 6) {
+                    Text("Latency")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+
+                    if manager.recentLatencies.count > 2 {
+                        LatencySparkline(samples: manager.recentLatencies)
+                            .frame(height: 14)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Spacer()
+                    }
+
+                    Text("\(latency)ms")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(
+                            latency > Defaults.degradedLatencyMilliseconds ? .orange : .primary
+                        )
+                }
+
+                if let median = manager.medianLatencyMilliseconds,
+                   manager.recentLatencies.count > 5 {
+                    HStack {
+                        Text("Median (last \(manager.recentLatencies.count))")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        Text("\(median)ms")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
 

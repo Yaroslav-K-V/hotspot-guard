@@ -1,30 +1,117 @@
 import Foundation
 import HotspotGuardCore
 
+extension ConnectivityResult {
+    static func online(ms: Int = 25) -> ConnectivityResult {
+        ConnectivityResult(
+            status: .online,
+            latency: .milliseconds(ms),
+            respondingHost: "1.1.1.1"
+        )
+    }
+
+    static func portal(ms: Int = 30) -> ConnectivityResult {
+        ConnectivityResult(
+            status: .captivePortal,
+            latency: .milliseconds(ms),
+            respondingHost: "1.1.1.1"
+        )
+    }
+}
+
 /// Probe that returns a scripted sequence of answers, repeating the last one
 /// once the script runs out.
 final class ScriptedProbe: ConnectivityProbe, @unchecked Sendable {
     private let lock = NSLock()
-    private var answers: [Bool]
+    private var answers: [ConnectivityResult]
     private(set) var callCount = 0
 
-    init(_ answers: [Bool]) {
+    /// Convenience for the many tests that only care about up/down.
+    convenience init(_ answers: [Bool]) {
+        self.init(answers.map { $0 ? .online() : .offline })
+    }
+
+    init(_ answers: [ConnectivityResult]) {
         precondition(!answers.isEmpty)
         self.answers = answers
     }
 
     // The actual mutation lives in a synchronous method: NSLock's lock()/unlock()
     // are unavailable from async contexts (they block a cooperative thread).
-    func check(timeout: TimeInterval) async -> Bool {
+    func check(timeout: TimeInterval) async -> ConnectivityResult {
         nextAnswer()
     }
 
-    private func nextAnswer() -> Bool {
+    private func nextAnswer() -> ConnectivityResult {
         lock.lock()
         defer { lock.unlock() }
         let answer = answers.count > 1 ? answers.removeFirst() : answers[0]
         callCount += 1
         return answer
+    }
+}
+
+/// Sleep/wake observer the test drives by hand.
+final class ManualSleepObserver: SleepWakeObserver, @unchecked Sendable {
+    private let lock = NSLock()
+    private var onSleep: (@Sendable () -> Void)?
+    private var onWake: (@Sendable () -> Void)?
+    private(set) var isStarted = false
+
+    func start(
+        onSleep: @escaping @Sendable () -> Void,
+        onWake: @escaping @Sendable () -> Void
+    ) {
+        lock.lock()
+        self.onSleep = onSleep
+        self.onWake = onWake
+        isStarted = true
+        lock.unlock()
+    }
+
+    func stop() {
+        lock.lock()
+        onSleep = nil
+        onWake = nil
+        isStarted = false
+        lock.unlock()
+    }
+
+    func emitSleep() {
+        lock.lock(); let handler = onSleep; lock.unlock()
+        handler?()
+    }
+
+    func emitWake() {
+        lock.lock(); let handler = onWake; lock.unlock()
+        handler?()
+    }
+}
+
+/// Captive-portal detector with a fixed answer.
+final class FakePortalDetector: CaptivePortalDetector, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _intercepted: Bool
+    private(set) var callCount = 0
+
+    init(intercepted: Bool) {
+        self._intercepted = intercepted
+    }
+
+    func setIntercepted(_ value: Bool) {
+        lock.lock(); _intercepted = value; lock.unlock()
+    }
+
+    // Mutation kept in a synchronous method: NSLock's lock()/unlock() are
+    // unavailable from async contexts (they block a cooperative thread).
+    func isIntercepted(timeout: TimeInterval) async -> Bool {
+        record()
+    }
+
+    private func record() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        callCount += 1
+        return _intercepted
     }
 }
 
@@ -112,11 +199,11 @@ final class GatedProbe: ConnectivityProbe, @unchecked Sendable {
     private let lock = NSLock()
     private var _isOpen = false
     private(set) var callCount = 0
-    private let answer: Bool
+    private let answer: ConnectivityResult
     private let autoOpenAfter: Duration
 
     init(answer: Bool, autoOpenAfter: Duration = .seconds(2)) {
-        self.answer = answer
+        self.answer = answer ? .online() : .offline
         self.autoOpenAfter = autoOpenAfter
     }
 
@@ -133,7 +220,7 @@ final class GatedProbe: ConnectivityProbe, @unchecked Sendable {
         lock.lock(); callCount += 1; lock.unlock()
     }
 
-    func check(timeout: TimeInterval) async -> Bool {
+    func check(timeout: TimeInterval) async -> ConnectivityResult {
         recordCall()
         let deadline = ContinuousClock.now.advanced(by: autoOpenAfter)
         while !isOpen() && ContinuousClock.now < deadline {

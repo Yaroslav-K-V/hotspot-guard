@@ -107,18 +107,42 @@ TestRunner.suite("TCPConnectivityProbe")
 do {
     // 192.0.2.0/24 is TEST-NET-1 (RFC 5737): reserved for documentation and
     // guaranteed never to be routable, so this is a deterministic "offline".
+    // No portal detector: an unroutable host must not trigger an HTTP request
+    // that would only add its own timeout to the measurement.
     let unreachable = TCPConnectivityProbe(
-        endpoints: [ProbeEndpoint(host: "192.0.2.1", port: 443)]
+        endpoints: [ProbeEndpoint(host: "192.0.2.1", port: 443)],
+        portalDetector: nil
     )
     let start = Date()
-    let reachable = await unreachable.check(timeout: 2)
+    let result = await unreachable.check(timeout: 2)
     let elapsed = Date().timeIntervalSince(start)
 
-    TestRunner.expect(!reachable, "reports an unroutable address as offline")
+    TestRunner.expect(!result.isReachable, "reports an unroutable address as offline")
+    TestRunner.expectEqual(result.status, .offline, "status is offline, not portal")
+    TestRunner.expect(result.latency == nil, "reports no latency when nothing answered")
     TestRunner.expect(elapsed < 4, "honours the timeout (took \(String(format: "%.1f", elapsed))s)")
 
-    let empty = TCPConnectivityProbe(endpoints: [])
-    TestRunner.expect(await empty.check(timeout: 1) == false, "no endpoints means offline")
+    let empty = TCPConnectivityProbe(endpoints: [], portalDetector: nil)
+    TestRunner.expect(await empty.check(timeout: 1).isReachable == false,
+                      "no endpoints means offline")
+}
+
+// MARK: - Captive portal detection
+
+TestRunner.suite("TCPConnectivityProbe — captive portal")
+
+do {
+    // A portal is only meaningful once TCP works, so the detector must not even
+    // be consulted when nothing answered.
+    let detector = FakePortalDetector(intercepted: true)
+    let offline = TCPConnectivityProbe(
+        endpoints: [ProbeEndpoint(host: "192.0.2.1", port: 443)],
+        portalDetector: detector
+    )
+    let result = await offline.check(timeout: 1)
+    TestRunner.expectEqual(result.status, .offline, "offline stays offline")
+    TestRunner.expectEqual(detector.callCount, 0,
+                           "does not run an HTTP check when there is no route")
 }
 
 // MARK: - ConnectionManager
@@ -131,6 +155,7 @@ func makeManager(
     ssid: String = "MyHotspot",
     password: String? = "secret",
     pathObserver: NetworkPathObserver? = nil,
+    sleepObserver: SleepWakeObserver? = nil,
     interval: TimeInterval = 10,
     suite: String
 ) -> (ConnectionManager, AppSettings, EventLog) {
@@ -145,6 +170,7 @@ func makeManager(
         wifi: wifi,
         notifier: notifier,
         pathObserver: pathObserver,
+        sleepObserver: sleepObserver,
         probeTimeout: 0.2,
         postAssociationDelay: .milliseconds(1),
         passwordProvider: { password }
@@ -564,6 +590,160 @@ do {
         CoreWLANController.normalize("HomeWiFi") != CoreWLANController.normalize("HomeWiFi2"),
         "still tells genuinely different networks apart"
     )
+}
+
+// MARK: - Captive portal handling
+
+TestRunner.suite("ConnectionManager — captive portal")
+
+do {
+    let wifi = FakeWiFiController(currentSSID: "HotelWiFi")
+    let notifier = FakeNotificationPresenter()
+    let (manager, _, log) = makeManager(
+        probe: ScriptedProbe([ConnectivityResult.portal()]),
+        wifi: wifi, notifier: notifier, suite: "selftest.portal"
+    )
+
+    await manager.tick()
+
+    TestRunner.expectEqual(manager.state, .captivePortal, "recognises interception")
+    // The whole point: re-associating would drop the session the login page is
+    // served over, sending the user back to square one.
+    TestRunner.expectEqual(wifi.associateCallCount, 0, "does NOT reconnect on a portal")
+    TestRunner.expectEqual(manager.consecutiveFailures, 0, "a portal is not a failure")
+    TestRunner.expect(!manager.isBackingOff, "does not back off while the user signs in")
+    TestRunner.expect(manager.lastError == nil, "does not present a portal as an error")
+    TestRunner.expect(
+        log.events.contains { $0.message.contains("Sign-in required") },
+        "logs that a sign-in is needed"
+    )
+    TestRunner.expectEqual(notifier.count, 1, "notifies once")
+
+    // Repeated ticks must not re-log or re-notify.
+    await manager.tick()
+    await manager.tick()
+    TestRunner.expectEqual(notifier.count, 1, "does not renotify each tick")
+    TestRunner.expectEqual(
+        log.events.filter { $0.message.contains("Sign-in required") }.count, 1,
+        "logs the portal once, not once per tick"
+    )
+
+    // Latency survives a portal: TCP did answer.
+    TestRunner.expect(manager.lastLatencyMilliseconds != nil,
+                      "still records latency behind a portal")
+}
+
+do {
+    // Signing in should return to normal without a reconnect.
+    let wifi = FakeWiFiController(currentSSID: "HotelWiFi")
+    let notifier = FakeNotificationPresenter()
+    let (manager, _, _) = makeManager(
+        probe: ScriptedProbe([.portal(), .online()]),
+        wifi: wifi, notifier: notifier, suite: "selftest.portal.recover"
+    )
+
+    await manager.tick()
+    TestRunner.expectEqual(manager.state, .captivePortal, "starts behind the portal")
+    await manager.tick()
+    TestRunner.expectEqual(manager.state, .connected, "returns to connected after sign-in")
+    TestRunner.expectEqual(wifi.associateCallCount, 0, "never touched the radio")
+}
+
+// MARK: - Latency
+
+TestRunner.suite("ConnectionManager — latency")
+
+do {
+    let wifi = FakeWiFiController(currentSSID: "Home")
+    let notifier = FakeNotificationPresenter()
+    let (manager, _, _) = makeManager(
+        probe: ScriptedProbe([.online(ms: 20), .online(ms: 400), .online(ms: 60)]),
+        wifi: wifi, notifier: notifier, suite: "selftest.latency"
+    )
+
+    TestRunner.expect(manager.lastLatencyMilliseconds == nil, "starts with no measurement")
+
+    await manager.tick()
+    TestRunner.expectEqual(manager.lastLatencyMilliseconds, 20, "records the handshake time")
+
+    await manager.tick()
+    await manager.tick()
+    TestRunner.expectEqual(manager.recentLatencies, [20, 400, 60], "keeps samples in order")
+    // Median, not mean: one 400ms spike should not redraw the picture.
+    TestRunner.expectEqual(manager.medianLatencyMilliseconds, 60, "uses the median")
+
+    // The buffer is bounded.
+    let (bounded, _, _) = makeManager(
+        probe: ScriptedProbe([.online(ms: 15)]),
+        wifi: wifi, notifier: notifier, suite: "selftest.latency.bounded"
+    )
+    for _ in 0..<(Defaults.latencySampleCount + 12) { await bounded.tick() }
+    TestRunner.expectEqual(bounded.recentLatencies.count, Defaults.latencySampleCount,
+                           "caps the sample buffer")
+
+    // An offline check clears the reading rather than leaving a stale one.
+    let (dropping, _, _) = makeManager(
+        probe: ScriptedProbe([.online(ms: 30), .offline]),
+        wifi: wifi, notifier: notifier, suite: "selftest.latency.drop"
+    )
+    await dropping.tick()
+    await dropping.tick()
+    TestRunner.expect(dropping.lastLatencyMilliseconds == nil,
+                      "clears latency when the link drops")
+}
+
+// MARK: - Sleep and wake
+
+TestRunner.suite("ConnectionManager — sleep and wake")
+
+do {
+    let wifi = FakeWiFiController(currentSSID: "Home")
+    let notifier = FakeNotificationPresenter()
+    let probe = ScriptedProbe([.online()])
+    let sleeper = ManualSleepObserver()
+    let (manager, _, log) = makeManager(
+        probe: probe, wifi: wifi, notifier: notifier,
+        sleepObserver: sleeper, suite: "selftest.sleep"
+    )
+
+    // Events before start() must be ignored.
+    sleeper.emitSleep()
+    TestRunner.expect(!manager.isAsleep, "ignores sleep events while stopped")
+
+    manager.start()
+    TestRunner.expect(sleeper.isStarted, "subscribes on start()")
+    try? await Task.sleep(for: .milliseconds(100))
+
+    sleeper.emitSleep()
+    try? await Task.sleep(for: .milliseconds(50))
+    TestRunner.expect(manager.isAsleep, "marks itself asleep")
+
+    // Probing a sleeping machine measures nothing and wakes hardware for free.
+    let duringSleep = probe.callCount
+    await manager.tick()
+    TestRunner.expectEqual(probe.callCount, duringSleep, "does not probe while asleep")
+
+    manager.handlePathChange(isSatisfied: true)
+    try? await Task.sleep(for: .milliseconds(50))
+    TestRunner.expectEqual(probe.callCount, duringSleep,
+                           "ignores path changes while asleep")
+
+    sleeper.emitWake()
+    try? await Task.sleep(for: .milliseconds(50))
+    TestRunner.expect(!manager.isAsleep, "clears the flag on wake")
+    TestRunner.expect(
+        log.events.contains { $0.message.contains("woke") },
+        "logs the wake"
+    )
+
+    // Wi-Fi needs seconds to re-associate; checking instantly would report a
+    // failure that fixes itself unaided.
+    TestRunner.expectEqual(probe.callCount, duringSleep,
+                           "does not probe immediately on wake")
+
+    manager.stop()
+    TestRunner.expect(!sleeper.isStarted, "unsubscribes on stop()")
+    TestRunner.expect(!manager.isAsleep, "resets the sleep flag on stop()")
 }
 
 exit(TestRunner.report())

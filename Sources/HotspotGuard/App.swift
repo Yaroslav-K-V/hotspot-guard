@@ -35,6 +35,9 @@ final class AppModel {
         self.manager = ConnectionManager(
             settings: settings,
             log: log,
+            // AppKit lives here, not in Core — this is the whole reason
+            // SleepWakeObserver is a protocol.
+            sleepObserver: WorkspaceSleepWakeObserver(),
             passwordProvider: { [credentials] in credentials.passwordForConnecting() }
         )
     }

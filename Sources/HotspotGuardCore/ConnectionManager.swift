@@ -23,6 +23,8 @@ public final class ConnectionManager {
         case reconnecting
         /// Probe failed and reconnecting did not fix it.
         case disconnected
+        /// Associated and TCP works, but HTTP is intercepted by a login page.
+        case captivePortal
     }
 
     // MARK: - Observable state
@@ -39,6 +41,26 @@ public final class ConnectionManager {
     public private(set) var lastError: String?
     /// When the last connectivity check ran.
     public private(set) var lastCheck: Date?
+
+    /// Handshake time of the most recent successful check, in milliseconds.
+    public private(set) var lastLatencyMilliseconds: Int?
+
+    /// Recent latency samples, oldest first, for the trend line.
+    ///
+    /// Kept in memory only — the point is the shape of the last few minutes,
+    /// not a permanent record.
+    public private(set) var recentLatencies: [Int] = []
+
+    /// Median of ``recentLatencies``. Median rather than mean because one
+    /// 2000ms outlier should not redraw the whole picture.
+    public var medianLatencyMilliseconds: Int? {
+        guard !recentLatencies.isEmpty else { return nil }
+        let sorted = recentLatencies.sorted()
+        return sorted[sorted.count / 2]
+    }
+
+    /// `true` between `willSleep` and `didWake`, while checking is suspended.
+    public private(set) var isAsleep: Bool = false
 
     /// `true` while a check or reconnect is in flight.
     ///
@@ -76,6 +98,7 @@ public final class ConnectionManager {
     @ObservationIgnored private let notifier: NotificationPresenter
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let pathObserver: NetworkPathObserver?
+    @ObservationIgnored private let sleepObserver: SleepWakeObserver?
     @ObservationIgnored private let passwordProvider: @MainActor () -> String?
     @ObservationIgnored private let probeTimeout: TimeInterval
     @ObservationIgnored private let postAssociationDelay: Duration
@@ -84,6 +107,8 @@ public final class ConnectionManager {
     /// Ensures the "could not reconnect" alert fires once per outage, not once
     /// per tick — otherwise a hotspot that is simply off would spam forever.
     @ObservationIgnored private var hasNotifiedForCurrentOutage = false
+    /// Same idea for the portal alert: once per portal encounter, not per tick.
+    @ObservationIgnored private var hasNotifiedForCurrentPortal = false
     /// Last interval announced in the log, so backoff is reported on change
     /// rather than every cycle.
     @ObservationIgnored private var lastAnnouncedInterval: TimeInterval?
@@ -97,10 +122,12 @@ public final class ConnectionManager {
         wifi: WiFiController = CoreWLANController(),
         notifier: NotificationPresenter = UserNotificationPresenter(),
         pathObserver: NetworkPathObserver? = SystemNetworkPathObserver(),
+        sleepObserver: SleepWakeObserver? = nil,
         probeTimeout: TimeInterval = Defaults.probeTimeout,
         postAssociationDelay: Duration = Defaults.postAssociationDelay,
         passwordProvider: @escaping @MainActor () -> String?
     ) {
+        self.sleepObserver = sleepObserver
         self.settings = settings
         self.log = log
         self.probe = probe
@@ -121,6 +148,7 @@ public final class ConnectionManager {
         lastAnnouncedInterval = settings.checkInterval
 
         startPathObserver()
+        startSleepObserver()
 
         loopTask = Task { [weak self] in
             await self?.runLoop()
@@ -132,6 +160,8 @@ public final class ConnectionManager {
         loopTask?.cancel()
         loopTask = nil
         pathObserver?.stop()
+        sleepObserver?.stop()
+        isAsleep = false
         state = .idle
         settings.monitoringEnabled = false
         log.append(.info, "Monitoring stopped")
@@ -183,6 +213,50 @@ public final class ConnectionManager {
             : "\(Int(interval / 60))m\(Int(interval.truncatingRemainder(dividingBy: 60)) > 0 ? " \(Int(interval.truncatingRemainder(dividingBy: 60)))s" : "")"
     }
 
+    // MARK: - Sleep and wake
+
+    private func startSleepObserver() {
+        sleepObserver?.start(
+            onSleep: { [weak self] in
+                Task { @MainActor [weak self] in self?.handleSleep() }
+            },
+            onWake: { [weak self] in
+                Task { @MainActor [weak self] in self?.handleWake() }
+            }
+        )
+    }
+
+    /// Suspends checking across sleep.
+    ///
+    /// `Task.sleep` is not a wall clock: across a system sleep its deadline can
+    /// pass unnoticed and fire the moment the machine wakes, before the Wi-Fi
+    /// interface has re-associated. That produces a guaranteed false "offline"
+    /// on every single wake, and — worse — an immediate pointless reconnect.
+    public func handleSleep() {
+        guard loopTask != nil, !isAsleep else { return }
+        isAsleep = true
+        log.append(.info, "Machine going to sleep — pausing checks")
+    }
+
+    /// Resumes after wake, deliberately not immediately.
+    ///
+    /// Wi-Fi needs a few seconds to re-associate and get a DHCP lease. Checking
+    /// the instant the lid opens reliably reports a failure that fixes itself
+    /// unaided a moment later.
+    public func handleWake() {
+        guard loopTask != nil, isAsleep else { return }
+        isAsleep = false
+        log.append(.info, "Machine woke — checking shortly")
+
+        // Restart the loop so a sleep-spanning sleep() deadline cannot fire a
+        // burst of catch-up checks.
+        loopTask?.cancel()
+        loopTask = Task { [weak self] in
+            try? await Task.sleep(for: Defaults.postWakeDelay)
+            await self?.runLoop()
+        }
+    }
+
     // MARK: - Network path changes
 
     private func startPathObserver() {
@@ -201,7 +275,7 @@ public final class ConnectionManager {
     /// acceptable: when Wi-Fi actually comes back, the check happens now rather
     /// than at the end of the backoff.
     public func handlePathChange(isSatisfied: Bool) {
-        guard loopTask != nil, !isWorking else { return }
+        guard loopTask != nil, !isWorking, !isAsleep else { return }
 
         // Rate limit: a flapping interface must not drive a scan storm.
         if let last = lastPathTrigger,
@@ -228,6 +302,9 @@ public final class ConnectionManager {
     /// doing anything if a cycle is already in flight.
     public func tick() async {
         guard !isWorking else { return }
+        // Probing a sleeping machine measures nothing and wakes hardware for
+        // no reason.
+        guard !isAsleep else { return }
         isWorking = true
         defer { isWorking = false }
 
@@ -238,22 +315,69 @@ public final class ConnectionManager {
         lastCheck = Date()
         currentSSID = await wifi.currentSSID()
 
-        if await probe.check(timeout: probeTimeout) {
-            handleOnline()
-        } else {
+        let result = await probe.check(timeout: probeTimeout)
+        recordLatency(result)
+
+        switch result.status {
+        case .online:
+            handleOnline(result)
+        case .captivePortal:
+            await handleCaptivePortal()
+        case .offline:
             await handleOffline()
         }
     }
 
-    private func handleOnline() {
+    private func recordLatency(_ result: ConnectivityResult) {
+        guard let milliseconds = result.latencyMilliseconds else {
+            lastLatencyMilliseconds = nil
+            return
+        }
+        lastLatencyMilliseconds = milliseconds
+        recentLatencies.append(milliseconds)
+        if recentLatencies.count > Defaults.latencySampleCount {
+            recentLatencies.removeFirst(recentLatencies.count - Defaults.latencySampleCount)
+        }
+    }
+
+    private func handleOnline(_ result: ConnectivityResult) {
         let wasOffline = (state != .connected)
         state = .connected
         consecutiveFailures = 0
         hasNotifiedForCurrentOutage = false
+        hasNotifiedForCurrentPortal = false
         lastError = nil
 
         if wasOffline {
-            log.append(.success, "Internet reachable\(currentSSID.map { " via \($0)" } ?? "")")
+            let via = currentSSID.map { " via \($0)" } ?? ""
+            let latency = result.latencyMilliseconds.map { " (\($0)ms)" } ?? ""
+            log.append(.success, "Internet reachable\(via)\(latency)")
+        }
+    }
+
+    /// A login portal is not an outage, and reconnecting would make it worse:
+    /// re-associating drops the session the login page is served over, so the
+    /// user would be sent back to the start. The only useful action is to tell
+    /// them to log in.
+    private func handleCaptivePortal() async {
+        let wasElsewhere = (state != .captivePortal)
+        state = .captivePortal
+        // Not a reconnect failure — clearing this keeps backoff from slowing
+        // down checks while the user is busy typing into the portal.
+        consecutiveFailures = 0
+        lastError = nil
+
+        guard wasElsewhere else { return }
+
+        let network = currentSSID.map { " on \($0)" } ?? ""
+        log.append(.warning, "Sign-in required\(network) — the network is intercepting traffic")
+
+        if !hasNotifiedForCurrentPortal {
+            hasNotifiedForCurrentPortal = true
+            await notifier.present(
+                title: "HotspotGuard: sign-in required",
+                body: "This network wants you to log in before it will pass traffic."
+            )
         }
     }
 
@@ -306,14 +430,24 @@ public final class ConnectionManager {
         try? await Task.sleep(for: postAssociationDelay)
         currentSSID = await wifi.currentSSID()
 
-        if await probe.check(timeout: probeTimeout) {
+        let result = await probe.check(timeout: probeTimeout)
+        recordLatency(result)
+
+        switch result.status {
+        case .online:
             reconnectCount += 1
             consecutiveFailures = 0
             hasNotifiedForCurrentOutage = false
             lastError = nil
             state = .connected
-            log.append(.success, "Reconnected to \(ssid) (#\(reconnectCount) this session)")
-        } else {
+            let latency = result.latencyMilliseconds.map { " — \($0)ms" } ?? ""
+            log.append(.success, "Reconnected to \(ssid) (#\(reconnectCount) this session)\(latency)")
+        case .captivePortal:
+            // Joining worked; the network just wants a login. Counting this as
+            // a failure would trigger endless re-association against a network
+            // that is behaving exactly as designed.
+            await handleCaptivePortal()
+        case .offline:
             await registerFailure("Joined \(ssid) but there is still no internet")
         }
     }
