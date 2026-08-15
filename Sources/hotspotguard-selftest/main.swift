@@ -224,7 +224,7 @@ TestRunner.suite("ConnectionManager — repeated failure notifies once")
 
 do {
     let wifi = FakeWiFiController(currentSSID: nil)
-    wifi.setAssociateError(WiFiError.networkNotFound("MyHotspot"))
+    wifi.setAssociateError(WiFiError.networkNotFound("MyHotspot", visible: ["SomeoneElsesWiFi"]))
     let notifier = FakeNotificationPresenter()
     let (manager, _, _) = makeManager(
         probe: ScriptedProbe([false]), wifi: wifi, notifier: notifier,
@@ -359,7 +359,7 @@ TestRunner.suite("ConnectionManager — backoff")
 
 do {
     let wifi = FakeWiFiController(currentSSID: nil)
-    wifi.setAssociateError(WiFiError.networkNotFound("MyHotspot"))
+    wifi.setAssociateError(WiFiError.networkNotFound("MyHotspot", visible: ["SomeoneElsesWiFi"]))
     let notifier = FakeNotificationPresenter()
     let (manager, settings, log) = makeManager(
         probe: ScriptedProbe([false]), wifi: wifi, notifier: notifier,
@@ -527,6 +527,43 @@ do {
     TestRunner.expect(store.lastError != nil, "records a storage error")
     TestRunner.expect(message?.contains("failed") == true, "returns a loggable failure message")
     TestRunner.expectEqual(store.draft, "willfail", "keeps the draft so it is not lost")
+}
+
+// MARK: - SSID matching
+
+TestRunner.suite("CoreWLANController.normalize")
+
+do {
+    // The trap this exists for: iOS names hotspots with U+2019, keyboards
+    // produce U+0027, and the two are indistinguishable on screen.
+    let typographic = "Yaroslav Krupoder\u{2019}s iPhone"
+    let typed = "Yaroslav Krupoder's iPhone"
+    TestRunner.expect(typographic != typed, "the two apostrophes really are different strings")
+    TestRunner.expectEqual(
+        CoreWLANController.normalize(typographic),
+        CoreWLANController.normalize(typed),
+        "folds a typographic apostrophe onto a typed one"
+    )
+
+    TestRunner.expectEqual(
+        CoreWLANController.normalize("  MyHotspot  "),
+        CoreWLANController.normalize("MyHotspot"),
+        "ignores surrounding whitespace"
+    )
+    TestRunner.expectEqual(
+        CoreWLANController.normalize("MYHOTSPOT"),
+        CoreWLANController.normalize("myhotspot"),
+        "ignores case"
+    )
+    TestRunner.expectEqual(
+        CoreWLANController.normalize("My\u{00A0}Hotspot"),
+        CoreWLANController.normalize("My Hotspot"),
+        "folds a non-breaking space onto a normal one"
+    )
+    TestRunner.expect(
+        CoreWLANController.normalize("HomeWiFi") != CoreWLANController.normalize("HomeWiFi2"),
+        "still tells genuinely different networks apart"
+    )
 }
 
 exit(TestRunner.report())
