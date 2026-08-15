@@ -966,4 +966,115 @@ do {
     TestRunner.expect(mixed.contains("no password: C"), "separates unusable ones")
 }
 
+// MARK: - SSID key normalisation
+
+TestRunner.suite("SSIDKey.normalize")
+
+do {
+    // The bug this exists for: iOS names hotspots with U+2019, a keyboard
+    // produces U+0027, they render identically, and Keychain writes are byte
+    // exact — so one network quietly acquired two items.
+    TestRunner.expectEqual(
+        SSIDKey.normalize("Yaroslav Krupoder\u{2019}s iPhone"),
+        "Yaroslav Krupoder's iPhone",
+        "folds the typographic apostrophe onto the typed one"
+    )
+    TestRunner.expectEqual(SSIDKey.normalize("Anna\u{2018}s"), "Anna's", "folds the left quote")
+    TestRunner.expectEqual(SSIDKey.normalize("Anna\u{02BC}s"), "Anna's", "folds the modifier letter")
+    TestRunner.expectEqual(SSIDKey.normalize("My\u{00A0}Net"), "My Net", "folds a non-breaking space")
+    TestRunner.expectEqual(SSIDKey.normalize("  Home  "), "Home", "trims")
+
+    // NFC: "é" as e + combining acute must key the same as the single codepoint.
+    TestRunner.expectEqual(
+        SSIDKey.normalize("Cafe\u{0301}"),
+        SSIDKey.normalize("Caf\u{00E9}"),
+        "composes decomposed accents to the same key"
+    )
+
+    // Case is preserved on purpose: SSIDs are case-sensitive by standard, so
+    // two networks differing only in case must NOT share a password. This is
+    // where it deliberately diverges from CoreWLANController.normalize.
+    TestRunner.expect(SSIDKey.normalize("MyNet") != SSIDKey.normalize("mynet"),
+                      "keeps case-different SSIDs apart")
+    TestRunner.expectEqual(SSIDKey.normalize("MyNet"), "MyNet", "does not lowercase")
+    TestRunner.expectEqual(CoreWLANController.normalize("MyNet"), "mynet",
+                           "whereas the air-matching normaliser does lowercase")
+
+    TestRunner.expectEqual(SSIDKey.normalize(""), "", "handles an empty string")
+}
+
+// MARK: - Keychain key normalisation, against the real Keychain
+
+TestRunner.suite("KeychainPasswordStorage — normalised keys")
+
+do {
+    let service = "com.yaroslavkv.hotspotguard.selftest.keys"
+    let typographic = "SelfTest Anna\u{2019}s iPhone"
+    let typed = "SelfTest Anna's iPhone"
+
+    // Clean slate, both spellings.
+    try? KeychainHelper.deletePassword(service: service, account: typographic)
+    try? KeychainHelper.deletePassword(service: service, account: typed)
+
+    do {
+        let storage = KeychainPasswordStorage(service: service)
+
+        // Writing under one spelling must be readable under the other.
+        try storage.setPassword("secret1", for: typographic)
+        TestRunner.expectEqual(try storage.password(for: typed), "secret1",
+                               "a typed apostrophe finds what U+2019 stored")
+        TestRunner.expectEqual(try storage.password(for: typographic), "secret1",
+                               "and the original spelling still works")
+
+        // And it must be ONE item, not two.
+        let accounts = try KeychainHelper.allAccounts(service: service)
+        TestRunner.expectEqual(accounts.count, 1, "stores a single item, not one per spelling")
+        TestRunner.expectEqual(accounts.first, typed, "stores it under the canonical key")
+
+        // Overwriting through the other spelling updates rather than duplicates.
+        try storage.setPassword("secret2", for: typographic)
+        TestRunner.expectEqual(try KeychainHelper.allAccounts(service: service).count, 1,
+                               "still a single item after an update")
+        TestRunner.expectEqual(try storage.password(for: typed), "secret2", "updated in place")
+
+        try? KeychainHelper.deletePassword(service: service, account: typed)
+    } catch {
+        print("  \u{1B}[33m⚠\u{1B}[0m Keychain unavailable, suite skipped: \(error)")
+    }
+}
+
+do {
+    // Migration of an item written the old way, straight through KeychainHelper.
+    let service = "com.yaroslavkv.hotspotguard.selftest.migrate"
+    let legacy = "SelfTest Legacy\u{2019}s iPhone"
+    let canonical = SSIDKey.normalize(legacy)
+
+    try? KeychainHelper.deletePassword(service: service, account: legacy)
+    try? KeychainHelper.deletePassword(service: service, account: canonical)
+
+    do {
+        // Written the pre-normalisation way: raw spelling, straight to Keychain.
+        try KeychainHelper.setPassword("legacy-secret", service: service, account: legacy)
+
+        let storage = KeychainPasswordStorage(service: service)
+        let migrated = try storage.migrateToNormalizedKeys()
+
+        TestRunner.expectEqual(migrated.count, 1, "reports the rewritten entry")
+        TestRunner.expectEqual(try storage.password(for: legacy), "legacy-secret",
+                               "the password survives the rewrite")
+
+        let accounts = try KeychainHelper.allAccounts(service: service)
+        TestRunner.expectEqual(accounts.count, 1, "leaves exactly one item")
+        TestRunner.expectEqual(accounts.first, canonical, "under the canonical key")
+
+        // Running it again must be a no-op, not a second rewrite.
+        TestRunner.expect(try storage.migrateToNormalizedKeys().isEmpty,
+                          "is idempotent — a second run changes nothing")
+
+        try? KeychainHelper.deletePassword(service: service, account: canonical)
+    } catch {
+        print("  \u{1B}[33m⚠\u{1B}[0m Keychain unavailable, suite skipped: \(error)")
+    }
+}
+
 exit(TestRunner.report())

@@ -134,4 +134,32 @@ public enum KeychainHelper {
     ) -> Bool {
         ((try? password(service: service, account: account)) ?? nil) != nil
     }
+
+    /// Every account name stored under `service`.
+    ///
+    /// Needed because Keychain lookups fold Unicode differences while writes do
+    /// not: searching for "Anna's" finds an item stored as "Anna’s", but adding
+    /// under the typed spelling creates a *second* item. Listing the raw account
+    /// names is the only way to see that divergence and repair it.
+    public static func allAccounts(service: String = defaultService) throws -> [String] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+
+        var items: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &items)
+
+        switch status {
+        case errSecSuccess:
+            guard let entries = items as? [[String: Any]] else { return [] }
+            return entries.compactMap { $0[kSecAttrAccount as String] as? String }
+        case errSecItemNotFound:
+            return []
+        default:
+            throw KeychainError.unexpectedStatus(status)
+        }
+    }
 }

@@ -141,7 +141,16 @@ public final class CredentialsStore {
         presenceCache.removeAll()
     }
 
+    /// `true` when the password field is currently aimed at `ssid`.
+    ///
+    /// A method rather than comparing `draftSSID` directly: that value is
+    /// canonical while the list holds SSIDs as typed, so `==` would quietly
+    /// return false for exactly the names normalisation exists to handle.
+    public func isEditing(_ ssid: String) -> Bool {
+        draftSSID == Self.normalize(ssid)
+    }
+
     static func normalize(_ ssid: String) -> String {
-        ssid.trimmingCharacters(in: .whitespacesAndNewlines)
+        SSIDKey.normalize(ssid)
     }
 }

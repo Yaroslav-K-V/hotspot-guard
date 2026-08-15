@@ -40,10 +40,31 @@ final class AppModel {
             sleepObserver: WorkspaceSleepWakeObserver(),
             passwordProvider: { [credentials] ssid in credentials.password(for: ssid) }
         )
+
+        // Startup work must not wait for the user to click the icon.
+        // `MenuBarExtra` builds its content view lazily — the first time the
+        // dropdown is shown — so anything hung off `.task` in that view does
+        // not run until then. Resuming monitoring after a restart, requesting
+        // permissions and repairing Keychain keys all have to happen at launch,
+        // whether or not anyone opens the menu.
+        Task { @MainActor [weak self] in
+            await self?.bootstrap()
+        }
     }
 
-    /// One-time startup work, kicked off from the first view that appears.
+    @ObservationIgnored private var hasBootstrapped = false
+
+    /// One-time startup work.
+    ///
+    /// Guarded because it is kicked off from `init` *and* from the menu's
+    /// `.task`, and whichever runs first wins.
     func bootstrap() async {
+        guard !hasBootstrapped else { return }
+        hasBootstrapped = true
+        await performBootstrap()
+    }
+
+    private func performBootstrap() async {
         // CoreWLAN needs Location on macOS 14+ to report the SSID or scan.
         location.request { [weak self] _ in
             self?.isLocationAuthorized = self?.location.isAuthorized ?? false
@@ -51,6 +72,20 @@ final class AppModel {
         isLocationAuthorized = location.isAuthorized
 
         await UserNotificationPresenter().requestAuthorization()
+
+        // One-shot repair of Keychain items written before keys were
+        // normalised. Runs before anything reads a password.
+        do {
+            let migrated = try KeychainPasswordStorage().migrateToNormalizedKeys()
+            if !migrated.isEmpty {
+                credentials.invalidateCache()
+                log.append(.info, "Tidied \(migrated.count) Keychain entr\(migrated.count == 1 ? "y" : "ies")")
+            }
+        } catch {
+            // Not fatal: passwords still resolve through the un-normalised
+            // fallback path in KeychainPasswordStorage.
+            log.append(.warning, "Could not tidy Keychain entries: \(error.localizedDescription)")
+        }
 
         log.append(.info, "HotspotGuard started")
         if !isLocationAuthorized {
@@ -99,7 +134,7 @@ final class AppModel {
         // The Keychain entry is deliberately left alone: removing a network
         // from the list is not the same as wanting its password destroyed, and
         // re-adding it later should just work.
-        if credentials.draftSSID == network.trimmedSSID {
+        if credentials.isEditing(network.trimmedSSID) {
             credentials.cancelEditing()
         }
     }

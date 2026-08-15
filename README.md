@@ -78,7 +78,7 @@ Keychain і `SMAppService` ідентифікують застосунок са�
 swift run hotspotguard-selftest
 ```
 
-171 перевірка: `AppSettings` (включно з міграцією зі старого формату),
+192 перевірки: `AppSettings` (включно з міграцією зі старого формату),
 `EventLog`, `KeychainHelper`, `CredentialsStore`, `TCPConnectivityProbe` і
 `ConnectionManager` — успішний реконект, captive portal, серія невдач із однією
 нотифікацією, відсутній пароль, start/stop, захист від паралельних спроб,
@@ -188,6 +188,20 @@ TCP-хендшейком це ловить, і мережа при цьому в
 **System Settings › General › Login Items › +**. З реальним Developer ID
 перемикач працює штатно.
 
+**Ключ Keychain нормалізується.** Пароль зберігається під канонічним SSID:
+типографські апострофи (`U+2019`, як в `Anna’s iPhone`) зводяться до звичайного,
+нерозривні пробіли — до звичайних, застосовується NFC. Регістр **не** чіпається,
+бо SSID чутливі до регістру за стандартом і `MyNet` з `mynet` не повинні ділити
+пароль — цим нормалізація ключа відрізняється від `CoreWLANController.normalize`,
+яка робить `lowercased()` для зіставлення з ефіром.
+
+Спостереження з практики: `SecItemCopyMatching` і сам повертає імена акаунтів у
+згорнутій формі — навіть для запису, у якого `security` CLI показує сирі байти
+`E28099` у blob. Два API розходяться в тому, як подають один і той самий запис.
+Тому одноразовий прохід `migrateToNormalizedKeys()` на практиці зазвичай нічого
+не робить; він лишений на випадок, коли згортання не відбудеться, бо ціна
+помилки — пароль, який мовчки не знаходиться.
+
 **Ad-hoc підпис змінюється при кожній перезбірці.** macOS сприймає новий білд як
 інший застосунок, тож дозвіл на Location доведеться давати знову, а Keychain
 може перепитати доступ. З постійним Developer ID цього немає.
@@ -211,7 +225,7 @@ Sources/
 │   ├── WiFiController.swift       # protocol + CoreWLAN-реалізація
 │   ├── NetworkPathObserver.swift  # protocol + NWPathMonitor
 │   ├── CredentialsStore.swift     # правила роботи з паролем
-│   ├── PasswordStorage.swift      # protocol + Keychain-реалізація
+│   ├── PasswordStorage.swift      # protocol + Keychain + нормалізація ключа
 │   ├── KeychainHelper.swift       # Security framework
 │   ├── LocationAuthorization.swift
 │   ├── Notifications.swift        # protocol + UserNotifications

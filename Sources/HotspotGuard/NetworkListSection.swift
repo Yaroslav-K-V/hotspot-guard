@@ -99,7 +99,7 @@ private struct NetworkRow: View {
     @Bindable var credentials: CredentialsStore
 
     private var ssid: String { network.trimmedSSID }
-    private var isEditing: Bool { credentials.draftSSID == ssid }
+    private var isEditing: Bool { credentials.isEditing(ssid) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
