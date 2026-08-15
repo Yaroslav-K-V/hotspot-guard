@@ -62,6 +62,9 @@ public final class ConnectionManager {
     /// `true` between `willSleep` and `didWake`, while checking is suspended.
     public private(set) var isAsleep: Bool = false
 
+    /// Network currently being tried, while sweeping the priority list.
+    public private(set) var currentAttemptSSID: String?
+
     /// `true` while a check or reconnect is in flight.
     ///
     /// `@MainActor` serialises *threads*, not *tasks*: an `async` method that
@@ -99,7 +102,9 @@ public final class ConnectionManager {
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let pathObserver: NetworkPathObserver?
     @ObservationIgnored private let sleepObserver: SleepWakeObserver?
-    @ObservationIgnored private let passwordProvider: @MainActor () -> String?
+    /// Supplies the password for a given SSID. Takes the SSID because the list
+    /// can hold several networks, each with its own Keychain entry.
+    @ObservationIgnored private let passwordProvider: @MainActor (String) -> String?
     @ObservationIgnored private let probeTimeout: TimeInterval
     @ObservationIgnored private let postAssociationDelay: Duration
 
@@ -125,7 +130,7 @@ public final class ConnectionManager {
         sleepObserver: SleepWakeObserver? = nil,
         probeTimeout: TimeInterval = Defaults.probeTimeout,
         postAssociationDelay: Duration = Defaults.postAssociationDelay,
-        passwordProvider: @escaping @MainActor () -> String?
+        passwordProvider: @escaping @MainActor (String) -> String?
     ) {
         self.sleepObserver = sleepObserver
         self.settings = settings
@@ -403,53 +408,135 @@ public final class ConnectionManager {
         await attemptReconnect()
     }
 
+    /// Tries each configured network in priority order until one works.
+    ///
     /// Callers must hold ``isWorking``.
     private func attemptReconnect() async {
-        let ssid = settings.ssid.trimmingCharacters(in: .whitespacesAndNewlines)
+        defer { currentAttemptSSID = nil }
 
-        guard !ssid.isEmpty else {
-            await registerFailure("No hotspot SSID configured")
+        let candidates = settings.networks.filter(\.isConfigured)
+        guard !candidates.isEmpty else {
+            await registerFailure("No networks configured")
             return
         }
-        guard let password = passwordProvider(), !password.isEmpty else {
-            await registerFailure(
-                "No password saved for \"\(ssid)\" — type it in the menu, then press Return"
+
+        // Populated by the first scan that comes back empty-handed. A scan
+        // sweeps every channel and takes seconds, so once one has told us what
+        // is on the air, the remaining candidates are filtered against that
+        // list instead of each paying for its own scan.
+        var networksOnAir: Set<String>?
+
+        var attempted = 0
+        var missingPassword: [String] = []
+        var notOnAir: [String] = []
+
+        for network in candidates {
+            if Task.isCancelled { return }
+
+            let ssid = network.trimmedSSID
+
+            if let onAir = networksOnAir, !onAir.contains(CoreWLANController.normalize(ssid)) {
+                notOnAir.append(ssid)
+                continue
+            }
+
+            guard let password = passwordProvider(ssid), !password.isEmpty else {
+                missingPassword.append(ssid)
+                continue
+            }
+
+            currentAttemptSSID = ssid
+            attempted += 1
+            if candidates.count > 1 {
+                log.append(.info, "Trying \(ssid)…")
+            }
+
+            do {
+                try await wifi.associate(ssid: ssid, password: password)
+            } catch {
+                if case WiFiError.networkNotFound(_, let visible) = error {
+                    networksOnAir = Set(visible.map(CoreWLANController.normalize))
+                    notOnAir.append(ssid)
+                } else {
+                    log.append(.warning, "\(ssid): \(error.localizedDescription)")
+                }
+                continue
+            }
+
+            // Associated — but "joined a network" is not "has internet". Give
+            // DHCP a moment, then confirm with a real probe before claiming a
+            // fix.
+            try? await Task.sleep(for: postAssociationDelay)
+            currentSSID = await wifi.currentSSID()
+
+            let result = await probe.check(timeout: probeTimeout)
+            recordLatency(result)
+
+            switch result.status {
+            case .online:
+                reconnectCount += 1
+                consecutiveFailures = 0
+                hasNotifiedForCurrentOutage = false
+                lastError = nil
+                state = .connected
+                let latency = result.latencyMilliseconds.map { " — \($0)ms" } ?? ""
+                log.append(
+                    .success,
+                    "Reconnected to \(ssid) (#\(reconnectCount) this session)\(latency)"
+                )
+                return
+            case .captivePortal:
+                // Joining worked; the network just wants a login. Treating it
+                // as a failure would move on to the next network and abandon a
+                // connection the user can fix in one click.
+                await handleCaptivePortal()
+                return
+            case .offline:
+                log.append(.warning, "\(ssid): joined, but no internet behind it")
+            }
+        }
+
+        await registerFailure(
+            Self.summarise(
+                candidates: candidates.count,
+                attempted: attempted,
+                missingPassword: missingPassword,
+                notOnAir: notOnAir
             )
-            return
+        )
+    }
+
+    /// Turns the outcome of a full sweep into one line a person can act on.
+    ///
+    /// "Reconnect failed" on its own says nothing about which of four networks
+    /// was the problem, or whether the problem is a missing password rather
+    /// than absent hardware.
+    public static func summarise(
+        candidates: Int,
+        attempted: Int,
+        missingPassword: [String],
+        notOnAir: [String]
+    ) -> String {
+        if attempted == 0, !missingPassword.isEmpty, notOnAir.isEmpty {
+            let list = missingPassword.joined(separator: ", ")
+            return missingPassword.count == 1
+                ? "No password saved for \"\(list)\" — type it in the menu, then press Return"
+                : "No passwords saved for: \(list)"
         }
 
-        do {
-            try await wifi.associate(ssid: ssid, password: password)
-        } catch {
-            await registerFailure(error.localizedDescription)
-            return
+        var parts: [String] = []
+        if candidates == 1 {
+            parts.append("Could not join \(notOnAir.first ?? missingPassword.first ?? "the network")")
+        } else {
+            parts.append("None of \(candidates) networks worked")
         }
-
-        // Associated — but "joined a network" is not "has internet". Give DHCP
-        // a moment, then confirm with a real probe before claiming success.
-        try? await Task.sleep(for: postAssociationDelay)
-        currentSSID = await wifi.currentSSID()
-
-        let result = await probe.check(timeout: probeTimeout)
-        recordLatency(result)
-
-        switch result.status {
-        case .online:
-            reconnectCount += 1
-            consecutiveFailures = 0
-            hasNotifiedForCurrentOutage = false
-            lastError = nil
-            state = .connected
-            let latency = result.latencyMilliseconds.map { " — \($0)ms" } ?? ""
-            log.append(.success, "Reconnected to \(ssid) (#\(reconnectCount) this session)\(latency)")
-        case .captivePortal:
-            // Joining worked; the network just wants a login. Counting this as
-            // a failure would trigger endless re-association against a network
-            // that is behaving exactly as designed.
-            await handleCaptivePortal()
-        case .offline:
-            await registerFailure("Joined \(ssid) but there is still no internet")
+        if !notOnAir.isEmpty {
+            parts.append("not on air: \(notOnAir.joined(separator: ", "))")
         }
+        if !missingPassword.isEmpty {
+            parts.append("no password: \(missingPassword.joined(separator: ", "))")
+        }
+        return parts.joined(separator: " — ")
     }
 
     private func registerFailure(_ reason: String) async {

@@ -120,6 +120,8 @@ final class FakeWiFiController: WiFiController, @unchecked Sendable {
     private let lock = NSLock()
     private var _ssid: String?
     private var _associateError: Error?
+    /// `nil` means the error is sticky; a number counts down and then clears.
+    private var _remainingFailures: Int?
     private(set) var associateCallCount = 0
     private(set) var lastAssociatedSSID: String?
     private(set) var lastPassword: String?
@@ -132,6 +134,15 @@ final class FakeWiFiController: WiFiController, @unchecked Sendable {
     func setAssociateError(_ error: Error?) {
         lock.lock(); defer { lock.unlock() }
         _associateError = error
+    }
+
+    /// Fails only the next `count` associations, then starts succeeding.
+    ///
+    /// Needed to model "the first network is gone but the second is fine",
+    /// which a single sticky error cannot express.
+    func setFailureCount(_ count: Int) {
+        lock.lock(); defer { lock.unlock() }
+        _remainingFailures = count
     }
 
     func currentSSID() async -> String? {
@@ -158,6 +169,16 @@ final class FakeWiFiController: WiFiController, @unchecked Sendable {
         associateCallCount += 1
         lastAssociatedSSID = ssid
         lastPassword = password
+
+        if let remaining = _remainingFailures {
+            if remaining <= 0 {
+                _ssid = ssid
+                return nil
+            }
+            _remainingFailures = remaining - 1
+            return _associateError
+        }
+
         if _associateError == nil { _ssid = ssid }
         return _associateError
     }

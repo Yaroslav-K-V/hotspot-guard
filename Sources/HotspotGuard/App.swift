@@ -25,7 +25,7 @@ final class AppModel {
     init() {
         let settings = AppSettings()
         let log = EventLog()
-        let credentials = CredentialsStore(settings: settings)
+        let credentials = CredentialsStore()
 
         self.settings = settings
         self.log = log
@@ -38,7 +38,7 @@ final class AppModel {
             // AppKit lives here, not in Core — this is the whole reason
             // SleepWakeObserver is a protocol.
             sleepObserver: WorkspaceSleepWakeObserver(),
-            passwordProvider: { [credentials] in credentials.passwordForConnecting() }
+            passwordProvider: { [credentials] ssid in credentials.password(for: ssid) }
         )
     }
 
@@ -73,8 +73,42 @@ final class AppModel {
         }
     }
 
-    func ssidChanged() {
-        credentials.ssidChanged()
+    // MARK: - Network list
+
+    func addNetwork(named ssid: String) {
+        let trimmed = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !settings.networks.contains(where: {
+            $0.trimmedSSID.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) else {
+            log.append(.warning, "\(trimmed) is already in the list")
+            return
+        }
+
+        settings.networks.append(HotspotNetwork(ssid: trimmed))
+        log.append(.info, "Added \(trimmed)")
+        // Straight into password entry: a network without one is the failure
+        // that only surfaces during an outage.
+        credentials.beginEditing(trimmed)
+    }
+
+    func removeNetwork(_ network: HotspotNetwork) {
+        settings.networks.removeAll { $0.id == network.id }
+        log.append(.info, "Removed \(network.trimmedSSID)")
+
+        // The Keychain entry is deliberately left alone: removing a network
+        // from the list is not the same as wanting its password destroyed, and
+        // re-adding it later should just work.
+        if credentials.draftSSID == network.trimmedSSID {
+            credentials.cancelEditing()
+        }
+    }
+
+    func moveNetwork(from index: Int, offset: Int) {
+        let target = index + offset
+        guard settings.networks.indices.contains(index),
+              settings.networks.indices.contains(target) else { return }
+        settings.networks.swapAt(index, target)
     }
 }
 

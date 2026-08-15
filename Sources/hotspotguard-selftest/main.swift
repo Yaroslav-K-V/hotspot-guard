@@ -13,7 +13,7 @@ do {
     let settings = AppSettings(defaults: defaults)
 
     TestRunner.expectEqual(settings.checkInterval, 10, "defaults to a 10s interval")
-    TestRunner.expectEqual(settings.ssid, "", "starts with no SSID")
+    TestRunner.expect(settings.networks.isEmpty, "starts with no networks")
     TestRunner.expect(!settings.monitoringEnabled, "starts with monitoring off")
 
     settings.checkInterval = 1
@@ -24,10 +24,10 @@ do {
     TestRunner.expectEqual(settings.checkInterval, Defaults.maximumCheckInterval,
                            "clamps an interval above the maximum")
 
-    settings.ssid = "MyHotspot"
+    settings.networks = [HotspotNetwork(ssid: "MyHotspot")]
     settings.checkInterval = 30
     let reloaded = AppSettings(defaults: defaults)
-    TestRunner.expectEqual(reloaded.ssid, "MyHotspot", "persists the SSID")
+    TestRunner.expectEqual(reloaded.networks.first?.ssid, "MyHotspot", "persists the network list")
     TestRunner.expectEqual(reloaded.checkInterval, 30, "persists the interval")
 }
 
@@ -160,7 +160,7 @@ func makeManager(
     suite: String
 ) -> (ConnectionManager, AppSettings, EventLog) {
     let settings = AppSettings(defaults: makeTestDefaults(suite))
-    settings.ssid = ssid
+    settings.networks = ssid.isEmpty ? [] : [HotspotNetwork(ssid: ssid)]
     settings.checkInterval = interval
     let log = EventLog()
     let manager = ConnectionManager(
@@ -173,7 +173,7 @@ func makeManager(
         sleepObserver: sleepObserver,
         probeTimeout: 0.2,
         postAssociationDelay: .milliseconds(1),
-        passwordProvider: { password }
+        passwordProvider: { _ in password }
     )
     return (manager, settings, log)
 }
@@ -292,8 +292,8 @@ do {
     TestRunner.expectEqual(wifi.associateCallCount, 0, "does not associate without an SSID")
     TestRunner.expectEqual(noSSID.state, .disconnected, "reports disconnected")
     TestRunner.expect(
-        log.events.contains { $0.message.contains("No hotspot SSID") },
-        "explains the missing SSID"
+        log.events.contains { $0.message.contains("No networks configured") },
+        "explains that nothing is configured"
     )
 
     let wifi2 = FakeWiFiController()
@@ -488,71 +488,151 @@ do {
 TestRunner.suite("CredentialsStore")
 
 do {
-    let settings = AppSettings(defaults: makeTestDefaults("selftest.creds"))
-    settings.ssid = "MyHotspot"
     let storage = InMemoryPasswordStorage()
-    let store = CredentialsStore(settings: settings, storage: storage)
+    let store = CredentialsStore(storage: storage)
 
-    TestRunner.expect(!store.hasStoredPassword, "starts with nothing stored")
-    TestRunner.expect(store.isMissingPassword, "flags a configured network with no password")
-    TestRunner.expect(store.passwordForConnecting() == nil, "has nothing to connect with")
+    TestRunner.expect(!store.hasPassword(for: "MyHotspot"), "starts with nothing stored")
+    TestRunner.expect(store.isMissingPassword(for: "MyHotspot"), "flags a network with no password")
+    TestRunner.expect(store.password(for: "MyHotspot") == nil, "has nothing to connect with")
 
+    store.beginEditing("MyHotspot")
     store.draft = "hunter2"
-    TestRunner.expect(store.hasUnsavedDraft, "reports an uncommitted draft")
-    TestRunner.expect(!store.isMissingPassword, "a typed draft is not 'missing'")
+    TestRunner.expect(store.hasUnsavedDraft(for: "MyHotspot"), "reports an uncommitted draft")
+    TestRunner.expect(!store.isMissingPassword(for: "MyHotspot"), "a typed draft is not 'missing'")
 
     store.save()
-    TestRunner.expect(store.hasStoredPassword, "commits the draft")
-    TestRunner.expect(!store.hasUnsavedDraft, "clears the draft after saving")
-    TestRunner.expectEqual(store.passwordForConnecting(), "hunter2", "supplies it for connecting")
+    TestRunner.expect(store.hasPassword(for: "MyHotspot"), "commits the draft")
+    TestRunner.expect(!store.hasUnsavedDraft(for: "MyHotspot"), "clears the draft after saving")
+    TestRunner.expectEqual(store.password(for: "MyHotspot"), "hunter2", "supplies it for connecting")
     TestRunner.expectEqual(try storage.password(for: "MyHotspot"), "hunter2", "reaches storage")
 
-    // The regression that started all this: editing the SSID fires on every
-    // keystroke and used to wipe the typed password.
-    store.draft = "newpassword"
-    store.ssidChanged()
-    TestRunner.expectEqual(store.draft, "newpassword",
-                           "editing the SSID does not discard the typed password")
+    // Whitespace must not create a second, invisible account.
+    TestRunner.expect(store.hasPassword(for: "  MyHotspot  "), "trims before lookup")
+    TestRunner.expectEqual(store.password(for: " MyHotspot "), "hunter2", "trims on read too")
 
-    // Whitespace in the SSID must not create a second, invisible account.
-    settings.ssid = "  MyHotspot  "
-    store.ssidChanged()
-    TestRunner.expectEqual(store.account, "MyHotspot", "trims the account name")
-    TestRunner.expect(store.hasStoredPassword, "still finds the password after trimming")
+    // Each network keeps its own secret.
+    store.beginEditing("OfficeWiFi")
+    store.draft = "office-pass"
+    store.save()
+    TestRunner.expectEqual(store.password(for: "OfficeWiFi"), "office-pass", "stores per network")
+    TestRunner.expectEqual(store.password(for: "MyHotspot"), "hunter2", "does not overwrite the other")
+    TestRunner.expect(!store.hasPassword(for: "Unknown"), "reports nothing for an unknown network")
 
-    // Switching networks: the indicator has to follow the SSID.
-    settings.ssid = "OtherNetwork"
-    store.ssidChanged()
-    TestRunner.expect(!store.hasStoredPassword, "no password for a different network")
-    TestRunner.expectEqual(store.passwordForConnecting(), nil, "does not leak the other password")
+    // Switching the edit target drops the draft: committing it would file the
+    // password under the wrong SSID.
+    store.beginEditing("MyHotspot")
+    store.draft = "half-typed"
+    store.beginEditing("OfficeWiFi")
+    TestRunner.expectEqual(store.draft, "", "switching networks clears a stale draft")
+    TestRunner.expect(!store.hasUnsavedDraft(for: "MyHotspot"), "the old target has no draft")
 
-    settings.ssid = "MyHotspot"
-    store.ssidChanged()
-    TestRunner.expect(store.hasStoredPassword, "finds it again when switching back")
+    // Re-selecting the same network must NOT clear what is being typed — this
+    // is the shape of the original password-wiping bug.
+    store.draft = "typing"
+    store.beginEditing("OfficeWiFi")
+    TestRunner.expectEqual(store.draft, "typing", "re-selecting the same network keeps the draft")
 
-    // Empty means delete.
-    store.draft = ""
+    // Saving an empty draft does nothing rather than deleting.
+    store.cancelEditing()
+    store.beginEditing("MyHotspot")
     let noop = store.save()
-    TestRunner.expect(noop == nil, "saving an empty draft is a no-op, not a deletion")
-    TestRunner.expect(store.hasStoredPassword, "the stored password survives an empty save")
+    TestRunner.expect(noop == nil, "saving an empty draft is a no-op")
+    TestRunner.expect(store.hasPassword(for: "MyHotspot"), "the stored password survives")
 
-    // No SSID configured.
-    settings.ssid = ""
-    store.ssidChanged()
+    // No target selected.
+    store.cancelEditing()
     store.draft = "orphan"
     store.save()
-    TestRunner.expect(store.lastError != nil, "refuses to save without a network name")
-    TestRunner.expectEqual(store.draft, "orphan", "keeps the draft after a refused save")
+    TestRunner.expect(store.lastError != nil, "refuses to save with no network selected")
+
+    // Forgetting a password.
+    store.cancelEditing()
+    store.forget("OfficeWiFi")
+    TestRunner.expect(!store.hasPassword(for: "OfficeWiFi"), "forget removes the entry")
+    TestRunner.expect(store.hasPassword(for: "MyHotspot"), "and leaves the others alone")
 
     // Storage failure is surfaced, not swallowed.
-    settings.ssid = "MyHotspot"
-    store.ssidChanged()
     storage.failWrites(true)
+    store.beginEditing("MyHotspot")
     store.draft = "willfail"
     let message = store.save()
     TestRunner.expect(store.lastError != nil, "records a storage error")
     TestRunner.expect(message?.contains("failed") == true, "returns a loggable failure message")
     TestRunner.expectEqual(store.draft, "willfail", "keeps the draft so it is not lost")
+    storage.failWrites(false)
+}
+
+do {
+    // The presence cache must not outlive the thing it caches.
+    let storage = InMemoryPasswordStorage(initial: ["Cached": "value"])
+    let store = CredentialsStore(storage: storage)
+
+    TestRunner.expect(store.hasPassword(for: "Cached"), "reads through to storage")
+    try? storage.setPassword("", for: "Cached")
+    TestRunner.expect(store.hasPassword(for: "Cached"), "serves the cached answer")
+    store.invalidateCache()
+    TestRunner.expect(!store.hasPassword(for: "Cached"), "invalidating re-reads storage")
+}
+
+// MARK: - Network list migration
+
+TestRunner.suite("AppSettings — network list")
+
+do {
+    let defaults = makeTestDefaults("selftest.networks")
+    let settings = AppSettings(defaults: defaults)
+
+    settings.networks = [
+        HotspotNetwork(ssid: "First"),
+        HotspotNetwork(ssid: "Second"),
+    ]
+    TestRunner.expectEqual(settings.primarySSID, "First", "primary is the head of the list")
+    TestRunner.expect(settings.isConfigured, "reports configured")
+
+    let reloaded = AppSettings(defaults: defaults)
+    TestRunner.expectEqual(reloaded.networks.count, 2, "persists the whole list")
+    TestRunner.expectEqual(reloaded.networks.map(\.ssid), ["First", "Second"], "preserves order")
+    TestRunner.expectEqual(reloaded.networks.first?.id, settings.networks.first?.id,
+                           "preserves identity across a reload")
+}
+
+do {
+    // An existing 1.0 install has a single SSID under the old key, and its
+    // Keychain entry is filed under exactly that name. Losing it would orphan
+    // the password and show an empty list.
+    let defaults = makeTestDefaults("selftest.migration")
+    defaults.set("LegacyHotspot", forKey: "hotspotSSID")
+
+    let migrated = AppSettings(defaults: defaults)
+    TestRunner.expectEqual(migrated.networks.count, 1, "migrates the legacy SSID")
+    TestRunner.expectEqual(migrated.networks.first?.ssid, "LegacyHotspot",
+                           "keeps the exact name the Keychain entry uses")
+
+    // The migrated list must be written out at once. `didSet` does not fire in
+    // init, so without an explicit write it lives only in memory — and then
+    // deleting the network looks like it worked but resurrects on next launch.
+    TestRunner.expect(defaults.data(forKey: "hotspotNetworks") != nil,
+                      "persists the migrated list immediately")
+
+    migrated.networks = []
+    let afterDeletion = AppSettings(defaults: defaults)
+    TestRunner.expect(afterDeletion.networks.isEmpty,
+                      "a deleted migrated network stays deleted across a reload")
+
+    // Whitespace-only legacy values are not a network.
+    let blankDefaults = makeTestDefaults("selftest.migration.blank")
+    blankDefaults.set("   ", forKey: "hotspotSSID")
+    TestRunner.expect(AppSettings(defaults: blankDefaults).networks.isEmpty,
+                      "does not migrate a blank legacy SSID")
+
+    // Once a real list exists it wins over the legacy key.
+    let bothDefaults = makeTestDefaults("selftest.migration.both")
+    bothDefaults.set("OldOne", forKey: "hotspotSSID")
+    let first = AppSettings(defaults: bothDefaults)
+    first.networks = [HotspotNetwork(ssid: "NewOne")]
+    let second = AppSettings(defaults: bothDefaults)
+    TestRunner.expectEqual(second.networks.map(\.ssid), ["NewOne"],
+                           "the saved list takes precedence over the legacy key")
 }
 
 // MARK: - SSID matching
@@ -744,6 +824,146 @@ do {
     manager.stop()
     TestRunner.expect(!sleeper.isStarted, "unsubscribes on stop()")
     TestRunner.expect(!manager.isAsleep, "resets the sleep flag on stop()")
+}
+
+// MARK: - Multiple networks
+
+TestRunner.suite("ConnectionManager — network priority")
+
+@MainActor
+func makeMultiManager(
+    networks: [String],
+    passwords: [String: String],
+    probe: ConnectivityProbe,
+    wifi: FakeWiFiController,
+    suite: String
+) -> (ConnectionManager, EventLog) {
+    let settings = AppSettings(defaults: makeTestDefaults(suite))
+    settings.networks = networks.map { HotspotNetwork(ssid: $0) }
+    let log = EventLog()
+    let manager = ConnectionManager(
+        settings: settings,
+        log: log,
+        probe: probe,
+        wifi: wifi,
+        notifier: FakeNotificationPresenter(),
+        probeTimeout: 0.2,
+        postAssociationDelay: .milliseconds(1),
+        passwordProvider: { passwords[$0] }
+    )
+    return (manager, log)
+}
+
+do {
+    // The first network works: the rest must not be touched at all.
+    let wifi = FakeWiFiController(currentSSID: nil)
+    let (manager, _) = makeMultiManager(
+        networks: ["First", "Second", "Third"],
+        passwords: ["First": "a", "Second": "b", "Third": "c"],
+        probe: ScriptedProbe([.offline, .online()]),
+        wifi: wifi,
+        suite: "selftest.priority.first"
+    )
+
+    await manager.tick()
+
+    TestRunner.expectEqual(manager.state, .connected, "connects via the first network")
+    TestRunner.expectEqual(wifi.associateCallCount, 1, "stops at the first success")
+    TestRunner.expectEqual(wifi.lastAssociatedSSID, "First", "tried them in order")
+}
+
+do {
+    // First is absent, second works — the fallback that justifies a list.
+    let wifi = FakeWiFiController(currentSSID: nil)
+    wifi.setAssociateError(WiFiError.networkNotFound("First", visible: ["Second", "Neighbour"]))
+    let (manager, log) = makeMultiManager(
+        networks: ["First", "Second"],
+        passwords: ["First": "a", "Second": "b"],
+        probe: ScriptedProbe([.offline, .online()]),
+        wifi: wifi,
+        suite: "selftest.priority.fallback"
+    )
+
+    // Only the first association fails; clear the error so the second succeeds.
+    wifi.setFailureCount(1)
+
+    await manager.tick()
+
+    TestRunner.expectEqual(manager.state, .connected, "falls through to the second network")
+    TestRunner.expectEqual(wifi.lastAssociatedSSID, "Second", "joined the one that was on air")
+    TestRunner.expectEqual(wifi.associateCallCount, 2, "tried exactly two networks")
+    TestRunner.expect(
+        log.events.contains { $0.message.contains("Trying Second") },
+        "says which network it is trying"
+    )
+}
+
+do {
+    // A network with no saved password is skipped, not attempted.
+    let wifi = FakeWiFiController(currentSSID: nil)
+    let (manager, _) = makeMultiManager(
+        networks: ["NoPassword", "HasPassword"],
+        passwords: ["HasPassword": "b"],
+        probe: ScriptedProbe([.offline, .online()]),
+        wifi: wifi,
+        suite: "selftest.priority.nopass"
+    )
+
+    await manager.tick()
+
+    TestRunner.expectEqual(wifi.associateCallCount, 1, "does not attempt a password-less network")
+    TestRunner.expectEqual(wifi.lastAssociatedSSID, "HasPassword", "skips straight to a usable one")
+}
+
+do {
+    // Everything fails: one summary, and the failure counter moves once for the
+    // whole sweep rather than once per network.
+    let wifi = FakeWiFiController(currentSSID: nil)
+    wifi.setAssociateError(WiFiError.associationFailed("bad password"))
+    let (manager, _) = makeMultiManager(
+        networks: ["One", "Two", "Three"],
+        passwords: ["One": "a", "Two": "b", "Three": "c"],
+        probe: ScriptedProbe([false]),
+        wifi: wifi,
+        suite: "selftest.priority.allfail"
+    )
+
+    await manager.tick()
+
+    TestRunner.expectEqual(wifi.associateCallCount, 3, "tries every candidate")
+    TestRunner.expectEqual(manager.state, .disconnected, "ends disconnected")
+    TestRunner.expectEqual(manager.consecutiveFailures, 1,
+                           "counts one failure for the sweep, not one per network")
+}
+
+// MARK: - Failure summaries
+
+TestRunner.suite("ConnectionManager.summarise")
+
+do {
+    // "Reconnect failed" alone says nothing about which of four networks broke,
+    // or whether the cause is a missing password rather than absent hardware.
+    TestRunner.expectEqual(
+        ConnectionManager.summarise(
+            candidates: 1, attempted: 0, missingPassword: ["Home"], notOnAir: []
+        ),
+        "No password saved for \"Home\" — type it in the menu, then press Return",
+        "names the single network missing a password"
+    )
+
+    TestRunner.expect(
+        ConnectionManager.summarise(
+            candidates: 2, attempted: 0, missingPassword: ["A", "B"], notOnAir: []
+        ).contains("A, B"),
+        "lists every network missing a password"
+    )
+
+    let mixed = ConnectionManager.summarise(
+        candidates: 3, attempted: 1, missingPassword: ["C"], notOnAir: ["A", "B"]
+    )
+    TestRunner.expect(mixed.contains("None of 3"), "says how many were considered")
+    TestRunner.expect(mixed.contains("not on air: A, B"), "separates absent networks")
+    TestRunner.expect(mixed.contains("no password: C"), "separates unusable ones")
 }
 
 exit(TestRunner.report())

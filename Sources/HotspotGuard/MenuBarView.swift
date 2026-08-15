@@ -19,11 +19,13 @@ struct MenuBarView: View {
             }
 
             Divider()
-            ConfigurationSection(
+            NetworkListSection(
                 model: model,
                 settings: model.settings,
                 credentials: model.credentials
             )
+            Divider()
+            IntervalSection(model: model, settings: model.settings)
             Divider()
             StatisticsSection(manager: manager, settings: model.settings)
             Divider()
@@ -160,104 +162,38 @@ private struct LatencySparkline: View {
     }
 }
 
-// MARK: - Configuration
+// MARK: - Interval
 
-private struct ConfigurationSection: View {
+/// The check interval. Networks moved out to `NetworkListSection` when the
+/// single SSID became a priority list.
+private struct IntervalSection: View {
     @Bindable var model: AppModel
     @Bindable var settings: AppSettings
-    @Bindable var credentials: CredentialsStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LabeledField(label: "Hotspot") {
-                TextField("SSID", text: $settings.ssid)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .onChange(of: settings.ssid) { _, _ in
-                        model.ssidChanged()
-                    }
+        HStack(spacing: 8) {
+            Text("Check every")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            Slider(
+                value: $settings.checkInterval,
+                in: Defaults.minimumCheckInterval...Defaults.maximumCheckInterval,
+                step: 5
+            )
+            .controlSize(.small)
+            .onChange(of: settings.checkInterval) { _, _ in
+                // Apply immediately instead of after the current sleep.
+                model.manager.restartIfRunning()
             }
 
-            LabeledField(label: "Password") {
-                HStack(spacing: 6) {
-                    SecureField(
-                        credentials.hasStoredPassword ? "Saved in Keychain" : "Password",
-                        text: $credentials.draft
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .onSubmit { model.savePassword() }
-
-                    Button {
-                        model.savePassword()
-                    } label: {
-                        Image(systemName: "checkmark.circle.fill")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(credentials.hasUnsavedDraft ? Color.green : Color.secondary)
-                    .disabled(!credentials.hasUnsavedDraft)
-                    .help("Save password to Keychain")
-                }
-            }
-
-            passwordStatus
-
-            LabeledField(label: "Every") {
-                HStack(spacing: 8) {
-                    Slider(
-                        value: $settings.checkInterval,
-                        in: Defaults.minimumCheckInterval...Defaults.maximumCheckInterval,
-                        step: 5
-                    )
-                    .controlSize(.small)
-                    .onChange(of: settings.checkInterval) { _, _ in
-                        // Apply immediately instead of after the current sleep.
-                        model.manager.restartIfRunning()
-                    }
-
-                    Text("\(Int(settings.checkInterval))s")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 30, alignment: .trailing)
-                }
-            }
+            Text("\(Int(settings.checkInterval))s")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 30, alignment: .trailing)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .onDisappear {
-            // Safety net: typing a password and closing the menu without
-            // pressing Return used to discard it silently.
-            if credentials.hasUnsavedDraft {
-                model.savePassword()
-            }
-        }
-    }
-
-    /// Makes the Keychain state visible. Without this the password field looks
-    /// identical whether the password is saved or merely typed.
-    @ViewBuilder
-    private var passwordStatus: some View {
-        if let error = credentials.lastError {
-            statusLine(error, symbol: "exclamationmark.triangle.fill", tint: .red)
-        } else if credentials.hasUnsavedDraft {
-            statusLine("Not saved yet — press ⏎ or click ✓",
-                       symbol: "pencil.circle.fill", tint: .orange)
-        } else if credentials.hasStoredPassword {
-            statusLine("Saved in Keychain", symbol: "lock.fill", tint: .green)
-        } else if credentials.isMissingPassword {
-            statusLine("No password saved for this network",
-                       symbol: "exclamationmark.triangle.fill", tint: .orange)
-        }
-    }
-
-    private func statusLine(_ text: String, symbol: String, tint: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 9))
-            Text(text).font(.system(size: 10))
-        }
-        .foregroundStyle(tint)
-        .padding(.leading, 70)
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, 10)
     }
 }
 
@@ -439,7 +375,7 @@ private struct ActionsSection: View {
                 // `isWorking`, not `state == .reconnecting`: a scheduled tick
                 // is busy from the moment it starts probing, well before the
                 // state turns to .reconnecting.
-                .disabled(manager.isWorking || model.settings.ssid.isEmpty)
+                .disabled(manager.isWorking || !model.settings.isConfigured)
 
                 Button {
                     manager.isRunning ? manager.stop() : manager.start()
