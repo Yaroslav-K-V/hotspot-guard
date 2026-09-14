@@ -162,4 +162,39 @@ public enum KeychainHelper {
             throw KeychainError.unexpectedStatus(status)
         }
     }
+
+    /// Every account name and its password stored under `service`.
+    ///
+    /// Fetches both the attributes and the data in a single query to avoid
+    /// N+1 lookups when migrating all stored keys.
+    public static func allAccountsAndPasswords(service: String = defaultService) throws -> [String: String] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+
+        var items: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &items)
+
+        switch status {
+        case errSecSuccess:
+            guard let entries = items as? [[String: Any]] else { return [:] }
+            var result: [String: String] = [:]
+            for entry in entries {
+                if let account = entry[kSecAttrAccount as String] as? String,
+                   let data = entry[kSecValueData as String] as? Data,
+                   let password = String(data: data, encoding: .utf8) {
+                    result[account] = password
+                }
+            }
+            return result
+        case errSecItemNotFound:
+            return [:]
+        default:
+            throw KeychainError.unexpectedStatus(status)
+        }
+    }
 }
