@@ -161,6 +161,13 @@ public struct AppleCaptivePortalDetector: CaptivePortalDetector {
 
     public init() {}
 
+    private static let sharedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.allowsCellularAccess = true
+        return URLSession(configuration: configuration)
+    }()
+
     public func isIntercepted(timeout: TimeInterval) async -> Bool {
         var request = URLRequest(url: Self.url)
         request.timeoutInterval = timeout
@@ -168,15 +175,8 @@ public struct AppleCaptivePortalDetector: CaptivePortalDetector {
         // network would hide the portal we are looking for.
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
 
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.allowsCellularAccess = true
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await Self.sharedSession.data(for: request)
 
             // A portal usually redirects; anything but 200 is interception.
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
