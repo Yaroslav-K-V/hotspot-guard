@@ -65,17 +65,17 @@ do {
             "returns nil for a missing item"
         )
 
-        try KeychainHelper.setPassword("hunter2", service: service, account: account)
+        try KeychainHelper.setPassword("mock_test_password_1", service: service, account: account)
         TestRunner.expectEqual(
             try KeychainHelper.password(service: service, account: account),
-            "hunter2",
+            "mock_test_password_1",
             "round-trips a password"
         )
 
-        try KeychainHelper.setPassword("hunter3", service: service, account: account)
+        try KeychainHelper.setPassword("mock_test_password_2", service: service, account: account)
         TestRunner.expectEqual(
             try KeychainHelper.password(service: service, account: account),
-            "hunter3",
+            "mock_test_password_2",
             "overwrites an existing password"
         )
 
@@ -153,7 +153,7 @@ func makeManager(
     wifi: FakeWiFiController,
     notifier: FakeNotificationPresenter,
     ssid: String = "MyHotspot",
-    password: String? = "secret",
+    password: String? = "mock_test_password",
     pathObserver: NetworkPathObserver? = nil,
     sleepObserver: SleepWakeObserver? = nil,
     interval: TimeInterval = 10,
@@ -218,7 +218,7 @@ do {
     TestRunner.expectEqual(manager.state, .connected, "ends up connected")
     TestRunner.expectEqual(wifi.associateCallCount, 1, "associates exactly once")
     TestRunner.expectEqual(wifi.lastAssociatedSSID, "MyHotspot", "associates to the configured SSID")
-    TestRunner.expectEqual(wifi.lastPassword, "secret", "passes the stored password through")
+    TestRunner.expectEqual(wifi.lastPassword, "mock_test_password", "passes the stored password through")
     TestRunner.expectEqual(manager.reconnectCount, 1, "increments the session counter")
     TestRunner.expectEqual(manager.consecutiveFailures, 0, "resets the failure streak")
     TestRunner.expectEqual(notifier.count, 0, "does not notify on success")
@@ -496,26 +496,26 @@ do {
     TestRunner.expect(store.password(for: "MyHotspot") == nil, "has nothing to connect with")
 
     store.beginEditing("MyHotspot")
-    store.draft = "hunter2"
+    store.draft = "mock_test_password_1"
     TestRunner.expect(store.hasUnsavedDraft(for: "MyHotspot"), "reports an uncommitted draft")
     TestRunner.expect(!store.isMissingPassword(for: "MyHotspot"), "a typed draft is not 'missing'")
 
     store.save()
     TestRunner.expect(store.hasPassword(for: "MyHotspot"), "commits the draft")
     TestRunner.expect(!store.hasUnsavedDraft(for: "MyHotspot"), "clears the draft after saving")
-    TestRunner.expectEqual(store.password(for: "MyHotspot"), "hunter2", "supplies it for connecting")
-    TestRunner.expectEqual(try storage.password(for: "MyHotspot"), "hunter2", "reaches storage")
+    TestRunner.expectEqual(store.password(for: "MyHotspot"), "mock_test_password_1", "supplies it for connecting")
+    TestRunner.expectEqual(try storage.password(for: "MyHotspot"), "mock_test_password_1", "reaches storage")
 
     // Whitespace must not create a second, invisible account.
     TestRunner.expect(store.hasPassword(for: "  MyHotspot  "), "trims before lookup")
-    TestRunner.expectEqual(store.password(for: " MyHotspot "), "hunter2", "trims on read too")
+    TestRunner.expectEqual(store.password(for: " MyHotspot "), "mock_test_password_1", "trims on read too")
 
     // Each network keeps its own secret.
     store.beginEditing("OfficeWiFi")
-    store.draft = "office-pass"
+    store.draft = "mock_office_pass"
     store.save()
-    TestRunner.expectEqual(store.password(for: "OfficeWiFi"), "office-pass", "stores per network")
-    TestRunner.expectEqual(store.password(for: "MyHotspot"), "hunter2", "does not overwrite the other")
+    TestRunner.expectEqual(store.password(for: "OfficeWiFi"), "mock_office_pass", "stores per network")
+    TestRunner.expectEqual(store.password(for: "MyHotspot"), "mock_test_password_1", "does not overwrite the other")
     TestRunner.expect(!store.hasPassword(for: "Unknown"), "reports nothing for an unknown network")
 
     // Switching the edit target drops the draft: committing it would file the
@@ -1029,10 +1029,10 @@ do {
         let storage = KeychainPasswordStorage(service: service)
 
         // Writing under one spelling must be readable under the other.
-        try storage.setPassword("secret1", for: typographic)
-        TestRunner.expectEqual(try storage.password(for: typed), "secret1",
+        try storage.setPassword("mock_secret_1", for: typographic)
+        TestRunner.expectEqual(try storage.password(for: typed), "mock_secret_1",
                                "a typed apostrophe finds what U+2019 stored")
-        TestRunner.expectEqual(try storage.password(for: typographic), "secret1",
+        TestRunner.expectEqual(try storage.password(for: typographic), "mock_secret_1",
                                "and the original spelling still works")
 
         // And it must be ONE item, not two.
@@ -1041,10 +1041,10 @@ do {
         TestRunner.expectEqual(accounts.first, typed, "stores it under the canonical key")
 
         // Overwriting through the other spelling updates rather than duplicates.
-        try storage.setPassword("secret2", for: typographic)
+        try storage.setPassword("mock_secret_2", for: typographic)
         TestRunner.expectEqual(try KeychainHelper.allAccounts(service: service).count, 1,
                                "still a single item after an update")
-        TestRunner.expectEqual(try storage.password(for: typed), "secret2", "updated in place")
+        TestRunner.expectEqual(try storage.password(for: typed), "mock_secret_2", "updated in place")
 
         try? KeychainHelper.deletePassword(service: service, account: typed)
     } catch {
@@ -1063,13 +1063,13 @@ do {
 
     do {
         // Written the pre-normalisation way: raw spelling, straight to Keychain.
-        try KeychainHelper.setPassword("legacy-secret", service: service, account: legacy)
+        try KeychainHelper.setPassword("mock_legacy_secret", service: service, account: legacy)
 
         let storage = KeychainPasswordStorage(service: service)
         let migrated = try storage.migrateToNormalizedKeys()
 
         TestRunner.expectEqual(migrated.count, 1, "reports the rewritten entry")
-        TestRunner.expectEqual(try storage.password(for: legacy), "legacy-secret",
+        TestRunner.expectEqual(try storage.password(for: legacy), "mock_legacy_secret",
                                "the password survives the rewrite")
 
         let accounts = try KeychainHelper.allAccounts(service: service)
