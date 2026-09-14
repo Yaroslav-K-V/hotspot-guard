@@ -2,6 +2,7 @@ import AppKit
 import HotspotGuardCore
 import Observation
 import SwiftUI
+import os
 
 /// Composition root: owns the long-lived objects and wires them together.
 ///
@@ -109,7 +110,7 @@ final class AppModel {
         let configured = settings.networks.filter(\.isConfigured)
         let usable = configured.filter { credentials.hasPassword(for: $0.trimmedSSID) }
         // Counts only: network names are the user's business, not the log's.
-        NSLog("HotspotGuard: \(configured.count) network(s) configured, \(usable.count) with a usable password")
+        Logger(subsystem: "HotspotGuard", category: "App").info("\(configured.count) network(s) configured, \(usable.count) with a usable password")
 
         if !configured.isEmpty, usable.count < configured.count {
             let missing = configured

@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Where hotspot passwords are kept.
 ///
@@ -127,7 +128,7 @@ public struct KeychainPasswordStorage: PasswordStorage {
             // program and will not hand over an item the "previous" app
             // stored. Logged rather than swallowed — silence here looks
             // identical to "there was nothing to migrate".
-            NSLog("HotspotGuard: could not migrate Keychain item — \(error.localizedDescription)")
+            Logger(subsystem: "HotspotGuard", category: "Keychain").error("could not migrate Keychain item — \(error.localizedDescription)")
             return false
         }
     }
