@@ -561,6 +561,13 @@ do {
     TestRunner.expectEqual(store.draft, "willfail", "keeps the draft so it is not lost")
     TestRunner.expectEqual(store.draftSSID, "FailNet", "keeps the draft SSID so it is not lost")
     TestRunner.expect(!store.hasPassword(for: "FailNet"), "does not falsely cache a failure as a success")
+
+    // Forgetting a password failure is surfaced.
+    let forgetMessage = store.forget("MyHotspot")
+    TestRunner.expectEqual(store.lastError, "storage is full of bees", "forget records the exact storage error")
+    TestRunner.expectEqual(forgetMessage, "Could not remove password: storage is full of bees", "forget returns a loggable failure message")
+    TestRunner.expect(store.hasPassword(for: "MyHotspot"), "keeps the presence cache intact when forget fails")
+
     storage.failWrites(false)
 }
 
