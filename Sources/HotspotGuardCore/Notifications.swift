@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import os
 
 /// Delivers user-visible alerts. Abstracted so tests can assert that a
 /// notification was raised without actually posting one.
@@ -27,7 +28,7 @@ public final class UserNotificationPresenter: NotificationPresenter {
         } catch {
             // A denied or failed request is not fatal: the app keeps working,
             // it just cannot raise alerts. The event log still records failures.
-            NSLog("HotspotGuard: notification authorization failed — \(error.localizedDescription)")
+            Logger(subsystem: "HotspotGuard", category: "Notifications").error("notification authorization failed — \(error.localizedDescription)")
         }
     }
 
@@ -48,7 +49,7 @@ public final class UserNotificationPresenter: NotificationPresenter {
         do {
             try await UNUserNotificationCenter.current().add(request)
         } catch {
-            NSLog("HotspotGuard: could not post notification — \(error.localizedDescription)")
+            Logger(subsystem: "HotspotGuard", category: "Notifications").error("could not post notification — \(error.localizedDescription)")
         }
     }
 }
