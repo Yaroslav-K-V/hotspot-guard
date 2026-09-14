@@ -16,12 +16,29 @@ import Foundation
 /// CoreWLAN will answer, which is what `NSLocationUsageDescription` in
 /// Info.plist tells the user.
 @MainActor
+public protocol LocationManagerProtocol: AnyObject {
+    var delegate: CLLocationManagerDelegate? { get set }
+    var authStatus: CLAuthorizationStatus { get }
+    func requestWhenInUseAuthorization()
+}
+
+extension CLLocationManager: LocationManagerProtocol {
+    public var authStatus: CLAuthorizationStatus {
+        if #available(macOS 11.0, *) {
+            return self.authorizationStatus
+        } else {
+            return CLLocationManager.authorizationStatus()
+        }
+    }
+}
+
+@MainActor
 public final class LocationAuthorization: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
+    private let manager: any LocationManagerProtocol
     private var onChange: (@MainActor (CLAuthorizationStatus) -> Void)?
 
     public var status: CLAuthorizationStatus {
-        manager.authorizationStatus
+        manager.authStatus
     }
 
     /// `true` when CoreWLAN will return real data.
@@ -34,9 +51,14 @@ public final class LocationAuthorization: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    public override init() {
+    public init(manager: any LocationManagerProtocol) {
+        self.manager = manager
         super.init()
-        manager.delegate = self
+        self.manager.delegate = self
+    }
+
+    public override convenience init() {
+        self.init(manager: CLLocationManager())
     }
 
     /// Prompts if the user has not decided yet. A no-op once decided —
