@@ -98,10 +98,24 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
     }
 
     public func associate(ssid: String, password: String) async throws {
+        let slept = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+            queue.async {
+                do {
+                    continuation.resume(returning: try Self.ensurePoweredOn())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+
+        if slept {
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 do {
-                    try Self.performAssociation(ssid: ssid, password: password)
+                    try Self.performScanAndAssociation(ssid: ssid, password: password)
                     continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
@@ -139,7 +153,7 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
     }
 
     /// Runs on `queue`. Synchronous and blocking by design.
-    private static func performAssociation(ssid: String, password: String) throws {
+    private static func ensurePoweredOn() throws -> Bool {
         guard let interface = CWWiFiClient.shared().interface() else {
             throw WiFiError.noInterface
         }
@@ -148,10 +162,18 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
             do {
                 try interface.setPower(true)
                 // The radio needs a moment before a scan returns anything.
-                Thread.sleep(forTimeInterval: 1.0)
+                return true
             } catch {
                 throw WiFiError.powerOnFailed(error.localizedDescription)
             }
+        }
+        return false
+    }
+
+    /// Runs on `queue`. Synchronous and blocking by design.
+    private static func performScanAndAssociation(ssid: String, password: String) throws {
+        guard let interface = CWWiFiClient.shared().interface() else {
+            throw WiFiError.noInterface
         }
 
         let networks: Set<CWNetwork>
