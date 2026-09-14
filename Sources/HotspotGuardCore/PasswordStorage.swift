@@ -91,36 +91,44 @@ public struct KeychainPasswordStorage: PasswordStorage {
             let key = SSIDKey.normalize(account)
             guard key != account else { continue }
 
-            // Per-item error handling: an entry whose ACL refuses a read — the
-            // normal state after an ad-hoc rebuild changes the app's identity —
-            // must not abort the sweep and leave later entries unrepaired.
-            do {
-                guard let secret = try KeychainHelper.password(service: service, account: account),
-                      !secret.isEmpty else {
-                    // Nothing worth keeping: drop the stray item.
-                    try? KeychainHelper.deletePassword(service: service, account: account)
-                    continue
-                }
-
-                try KeychainHelper.setPassword(secret, service: service, account: key)
-
-                // Only destroy the original once the replacement reads back.
-                let readBack = try KeychainHelper.password(service: service, account: key)
-                guard readBack == secret else { continue }
-
-                try? KeychainHelper.deletePassword(service: service, account: account)
+            if migrate(account: account, to: key) {
                 migrated.append(account)
-            } catch {
-                // Most often an ACL refusal: an ad-hoc rebuild changes the
-                // app's code signature, so macOS treats it as a different
-                // program and will not hand over an item the "previous" app
-                // stored. Logged rather than swallowed — silence here looks
-                // identical to "there was nothing to migrate".
-                NSLog("HotspotGuard: could not migrate Keychain item — \(error.localizedDescription)")
-                continue
             }
         }
 
         return migrated
+    }
+
+    /// Migrates a single account to its normalized key.
+    /// - Returns: `true` if the migration was successful, `false` otherwise.
+    private func migrate(account: String, to key: String) -> Bool {
+        // Per-item error handling: an entry whose ACL refuses a read — the
+        // normal state after an ad-hoc rebuild changes the app's identity —
+        // must not abort the sweep and leave later entries unrepaired.
+        do {
+            guard let secret = try KeychainHelper.password(service: service, account: account),
+                  !secret.isEmpty else {
+                // Nothing worth keeping: drop the stray item.
+                try? KeychainHelper.deletePassword(service: service, account: account)
+                return false
+            }
+
+            try KeychainHelper.setPassword(secret, service: service, account: key)
+
+            // Only destroy the original once the replacement reads back.
+            let readBack = try KeychainHelper.password(service: service, account: key)
+            guard readBack == secret else { return false }
+
+            try? KeychainHelper.deletePassword(service: service, account: account)
+            return true
+        } catch {
+            // Most often an ACL refusal: an ad-hoc rebuild changes the
+            // app's code signature, so macOS treats it as a different
+            // program and will not hand over an item the "previous" app
+            // stored. Logged rather than swallowed — silence here looks
+            // identical to "there was nothing to migrate".
+            NSLog("HotspotGuard: could not migrate Keychain item — \(error.localizedDescription)")
+            return false
+        }
     }
 }
