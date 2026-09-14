@@ -79,7 +79,7 @@ public struct KeychainPasswordStorage: PasswordStorage {
     /// - Returns: the account names that were rewritten.
     @discardableResult
     public func migrateToNormalizedKeys() throws -> [String] {
-        let accounts = try KeychainHelper.allAccounts(service: service)
+        let accountsAndPasswords = try KeychainHelper.allAccountsAndPasswords(service: service)
         // Usually a no-op in practice: `SecItemCopyMatching` hands back account
         // names already folded to a canonical form, even for an item the
         // `security` CLI shows with raw U+2019 bytes in its blob. The two APIs
@@ -88,11 +88,11 @@ public struct KeychainPasswordStorage: PasswordStorage {
         // password that silently cannot be found.
         var migrated: [String] = []
 
-        for account in accounts {
+        for (account, secret) in accountsAndPasswords {
             let key = SSIDKey.normalize(account)
             guard key != account else { continue }
 
-            if migrate(account: account, to: key) {
+            if migrate(account: account, secret: secret, to: key) {
                 migrated.append(account)
             }
         }
@@ -100,15 +100,14 @@ public struct KeychainPasswordStorage: PasswordStorage {
         return migrated
     }
 
-    /// Migrates a single account to its normalized key.
+    /// Migrates a single account to its normalized key using a pre-fetched secret.
     /// - Returns: `true` if the migration was successful, `false` otherwise.
-    private func migrate(account: String, to key: String) -> Bool {
+    private func migrate(account: String, secret: String, to key: String) -> Bool {
         // Per-item error handling: an entry whose ACL refuses a read — the
         // normal state after an ad-hoc rebuild changes the app's identity —
         // must not abort the sweep and leave later entries unrepaired.
         do {
-            guard let secret = try KeychainHelper.password(service: service, account: account),
-                  !secret.isEmpty else {
+            guard !secret.isEmpty else {
                 // Nothing worth keeping: drop the stray item.
                 try? KeychainHelper.deletePassword(service: service, account: account)
                 return false
