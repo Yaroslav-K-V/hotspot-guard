@@ -408,6 +408,62 @@ public final class ConnectionManager {
         await attemptReconnect()
     }
 
+    private enum ConnectionAttemptResult {
+        case success(latency: Int?)
+        case captivePortal
+        case notFound(visibleNetworks: [String])
+        case failed
+    }
+
+    private func tryConnect(ssid: String, password: String, isMultiple: Bool) async -> ConnectionAttemptResult {
+        if isMultiple {
+            log.append(.info, "Trying \(ssid)…")
+        }
+
+        do {
+            try await wifi.associate(ssid: ssid, password: password)
+        } catch {
+            if case WiFiError.networkNotFound(_, let visible) = error {
+                return .notFound(visibleNetworks: visible)
+            } else {
+                log.append(.warning, "\(ssid): \(error.localizedDescription)")
+                return .failed
+            }
+        }
+
+        // Associated — but "joined a network" is not "has internet". Give
+        // DHCP a moment, then confirm with a real probe before claiming a
+        // fix.
+        try? await Task.sleep(for: postAssociationDelay)
+        currentSSID = await wifi.currentSSID()
+
+        let result = await probe.check(timeout: probeTimeout)
+        recordLatency(result)
+
+        switch result.status {
+        case .online:
+            return .success(latency: result.latencyMilliseconds)
+        case .captivePortal:
+            return .captivePortal
+        case .offline:
+            log.append(.warning, "\(ssid): joined, but no internet behind it")
+            return .failed
+        }
+    }
+
+    private func handleReconnectSuccess(ssid: String, latency: Int?) {
+        reconnectCount += 1
+        consecutiveFailures = 0
+        hasNotifiedForCurrentOutage = false
+        lastError = nil
+        state = .connected
+        let latencyStr = latency.map { " — \($0)ms" } ?? ""
+        log.append(
+            .success,
+            "Reconnected to \(ssid) (#\(reconnectCount) this session)\(latencyStr)"
+        )
+    }
+
     /// Tries each configured network in priority order until one works.
     ///
     /// Callers must hold ``isWorking``.
@@ -430,6 +486,8 @@ public final class ConnectionManager {
         var missingPassword: [String] = []
         var notOnAir: [String] = []
 
+        let isMultiple = candidates.count > 1
+
         for network in candidates {
             if Task.isCancelled { return }
 
@@ -447,43 +505,11 @@ public final class ConnectionManager {
 
             currentAttemptSSID = ssid
             attempted += 1
-            if candidates.count > 1 {
-                log.append(.info, "Trying \(ssid)…")
-            }
 
-            do {
-                try await wifi.associate(ssid: ssid, password: password)
-            } catch {
-                if case WiFiError.networkNotFound(_, let visible) = error {
-                    networksOnAir = Set(visible.map(CoreWLANController.normalize))
-                    notOnAir.append(ssid)
-                } else {
-                    log.append(.warning, "\(ssid): \(error.localizedDescription)")
-                }
-                continue
-            }
-
-            // Associated — but "joined a network" is not "has internet". Give
-            // DHCP a moment, then confirm with a real probe before claiming a
-            // fix.
-            try? await Task.sleep(for: postAssociationDelay)
-            currentSSID = await wifi.currentSSID()
-
-            let result = await probe.check(timeout: probeTimeout)
-            recordLatency(result)
-
-            switch result.status {
-            case .online:
-                reconnectCount += 1
-                consecutiveFailures = 0
-                hasNotifiedForCurrentOutage = false
-                lastError = nil
-                state = .connected
-                let latency = result.latencyMilliseconds.map { " — \($0)ms" } ?? ""
-                log.append(
-                    .success,
-                    "Reconnected to \(ssid) (#\(reconnectCount) this session)\(latency)"
-                )
+            let result = await tryConnect(ssid: ssid, password: password, isMultiple: isMultiple)
+            switch result {
+            case .success(let latency):
+                handleReconnectSuccess(ssid: ssid, latency: latency)
                 return
             case .captivePortal:
                 // Joining worked; the network just wants a login. Treating it
@@ -491,8 +517,11 @@ public final class ConnectionManager {
                 // connection the user can fix in one click.
                 await handleCaptivePortal()
                 return
-            case .offline:
-                log.append(.warning, "\(ssid): joined, but no internet behind it")
+            case .notFound(let visible):
+                networksOnAir = Set(visible.map(CoreWLANController.normalize))
+                notOnAir.append(ssid)
+            case .failed:
+                continue
             }
         }
 
