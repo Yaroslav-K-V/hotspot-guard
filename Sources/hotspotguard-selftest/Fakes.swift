@@ -1,6 +1,7 @@
 import Foundation
+import CoreLocation
 import HotspotGuardCore
-
+import UserNotifications
 extension ConnectivityResult {
     static func online(ms: Int = 25) -> ConnectivityResult {
         ConnectivityResult(
@@ -342,5 +343,15 @@ final class FakeUserNotificationCenter: UserNotificationCenterProtocol, @uncheck
 
     func add(_ request: UNNotificationRequest) async throws {
         // Not used in this test
+    }
+}
+
+final class FakeLocationManager: LocationManagerProtocol, @unchecked Sendable {
+    weak var delegate: CLLocationManagerDelegate?
+    var authStatus: CLAuthorizationStatus = .notDetermined
+    private(set) var requestWhenInUseAuthorizationCallCount = 0
+
+    func requestWhenInUseAuthorization() {
+        requestWhenInUseAuthorizationCallCount += 1
     }
 }

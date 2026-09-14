@@ -1105,4 +1105,43 @@ do {
 
 
 
+
+// MARK: - Location Authorization
+
+TestRunner.suite("LocationAuthorization.request")
+
+do {
+    // When status is .notDetermined, request() calls requestWhenInUseAuthorization
+    let fakeManager = FakeLocationManager()
+    fakeManager.authStatus = .notDetermined
+
+    let auth = LocationAuthorization(manager: fakeManager)
+
+    var callbackCount = 0
+    auth.request { _ in
+        callbackCount += 1
+    }
+
+    TestRunner.expectEqual(fakeManager.requestWhenInUseAuthorizationCallCount, 1, "requests authorization from CLLocationManager")
+    TestRunner.expectEqual(callbackCount, 0, "does not immediately fire the callback since status is not determined")
+}
+
+do {
+    // When status is already determined (e.g. .denied), request() fires callback immediately and doesn't ask system
+    let fakeManager = FakeLocationManager()
+    fakeManager.authStatus = .denied
+
+    let auth = LocationAuthorization(manager: fakeManager)
+
+    var callbackCount = 0
+    var receivedStatus: CLAuthorizationStatus?
+    auth.request { status in
+        callbackCount += 1
+        receivedStatus = status
+    }
+
+    TestRunner.expectEqual(fakeManager.requestWhenInUseAuthorizationCallCount, 0, "does not ask CLLocationManager since status is determined")
+    TestRunner.expectEqual(callbackCount, 1, "fires the callback immediately")
+    TestRunner.expectEqual(receivedStatus, .denied, "passes the correct status to the callback")
+}
 exit(TestRunner.report())
