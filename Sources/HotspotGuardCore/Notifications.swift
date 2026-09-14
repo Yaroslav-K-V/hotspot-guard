@@ -2,6 +2,29 @@ import Foundation
 import UserNotifications
 import os
 
+/// Abstracting UNUserNotificationCenter for testability.
+public protocol UserNotificationCenterProtocol: Sendable {
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
+    func add(_ request: UNNotificationRequest) async throws
+}
+
+/// A wrapper for the system UNUserNotificationCenter.
+public struct UserNotificationCenterWrapper: UserNotificationCenterProtocol {
+    private let center: UNUserNotificationCenter
+
+    public init(center: UNUserNotificationCenter = .current()) {
+        self.center = center
+    }
+
+    public func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
+        try await center.requestAuthorization(options: options)
+    }
+
+    public func add(_ request: UNNotificationRequest) async throws {
+        try await center.add(request)
+    }
+}
+
 /// Delivers user-visible alerts. Abstracted so tests can assert that a
 /// notification was raised without actually posting one.
 public protocol NotificationPresenter: Sendable {
@@ -10,21 +33,29 @@ public protocol NotificationPresenter: Sendable {
 }
 
 /// `UNUserNotificationCenter`-backed implementation.
-public final class UserNotificationPresenter: NotificationPresenter {
-    public init() {}
+public final class UserNotificationPresenter: NotificationPresenter, @unchecked Sendable {
+    private let center: UserNotificationCenterProtocol
+    private let checkIsAvailable: @Sendable () -> Bool
+
+    public init(
+        center: UserNotificationCenterProtocol = UserNotificationCenterWrapper(),
+        isAvailable: @escaping @Sendable () -> Bool = { Bundle.main.bundleIdentifier != nil }
+    ) {
+        self.center = center
+        self.checkIsAvailable = isAvailable
+    }
 
     /// `UNUserNotificationCenter.current()` raises an Objective-C exception —
     /// not a catchable Swift error — when the process has no bundle identifier.
     /// That is exactly the case under `swift run`, so guard rather than crash.
     private var isAvailable: Bool {
-        Bundle.main.bundleIdentifier != nil
+        checkIsAvailable()
     }
 
     public func requestAuthorization() async {
         guard isAvailable else { return }
         do {
-            _ = try await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound])
+            _ = try await center.requestAuthorization(options: [.alert, .sound])
         } catch {
             // A denied or failed request is not fatal: the app keeps working,
             // it just cannot raise alerts. The event log still records failures.
@@ -47,7 +78,7 @@ public final class UserNotificationPresenter: NotificationPresenter {
         )
 
         do {
-            try await UNUserNotificationCenter.current().add(request)
+            try await center.add(request)
         } catch {
             Logger(subsystem: "HotspotGuard", category: "Notifications").error("could not post notification — \(error.localizedDescription)")
         }
