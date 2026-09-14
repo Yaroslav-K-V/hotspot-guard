@@ -553,12 +553,14 @@ do {
 
     // Storage failure is surfaced, not swallowed.
     storage.failWrites(true)
-    store.beginEditing("MyHotspot")
+    store.beginEditing("FailNet")
     store.draft = "willfail"
     let message = store.save()
-    TestRunner.expect(store.lastError != nil, "records a storage error")
-    TestRunner.expect(message?.contains("failed") == true, "returns a loggable failure message")
+    TestRunner.expectEqual(store.lastError, "storage is full of bees", "records the exact storage error")
+    TestRunner.expectEqual(message, "Keychain write failed: storage is full of bees", "returns a loggable failure message")
     TestRunner.expectEqual(store.draft, "willfail", "keeps the draft so it is not lost")
+    TestRunner.expectEqual(store.draftSSID, "FailNet", "keeps the draft SSID so it is not lost")
+    TestRunner.expect(!store.hasPassword(for: "FailNet"), "does not falsely cache a failure as a success")
     storage.failWrites(false)
 }
 
