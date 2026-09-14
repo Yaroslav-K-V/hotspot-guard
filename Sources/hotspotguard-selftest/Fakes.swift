@@ -313,3 +313,34 @@ func makeTestDefaults(_ name: String) -> UserDefaults {
     defaults.removePersistentDomain(forName: name)
     return defaults
 }
+
+import UserNotifications
+
+/// Captures user notification center calls instead of executing them.
+final class FakeUserNotificationCenter: UserNotificationCenterProtocol, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _authorizationError: Error?
+    private(set) var requestAuthorizationCallCount = 0
+
+    init(authorizationError: Error? = nil) {
+        self._authorizationError = authorizationError
+    }
+
+    func setAuthorizationError(_ error: Error?) {
+        lock.lock(); defer { lock.unlock() }
+        _authorizationError = error
+    }
+
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        requestAuthorizationCallCount += 1
+        if let error = _authorizationError {
+            throw error
+        }
+        return true
+    }
+
+    func add(_ request: UNNotificationRequest) async throws {
+        // Not used in this test
+    }
+}
