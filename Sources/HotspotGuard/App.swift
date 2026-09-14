@@ -65,6 +65,17 @@ final class AppModel {
     }
 
     private func performBootstrap() async {
+        await requestAuthorizations()
+        migrateKeychain()
+        logStartupStatus()
+
+        // Resume monitoring if it was on when the app last quit.
+        if settings.monitoringEnabled {
+            manager.start()
+        }
+    }
+
+    private func requestAuthorizations() async {
         // CoreWLAN needs Location on macOS 14+ to report the SSID or scan.
         location.request { [weak self] _ in
             self?.isLocationAuthorized = self?.location.isAuthorized ?? false
@@ -72,7 +83,9 @@ final class AppModel {
         isLocationAuthorized = location.isAuthorized
 
         await UserNotificationPresenter().requestAuthorization()
+    }
 
+    private func migrateKeychain() {
         // One-shot repair of Keychain items written before keys were
         // normalised. Runs before anything reads a password.
         do {
@@ -86,7 +99,9 @@ final class AppModel {
             // fallback path in KeychainPasswordStorage.
             log.append(.warning, "Could not tidy Keychain entries: \(error.localizedDescription)")
         }
+    }
 
+    private func logStartupStatus() {
         log.append(.info, "HotspotGuard started")
 
         // A configured network with no reachable password fails only during an
@@ -108,11 +123,6 @@ final class AppModel {
                 .warning,
                 "Location access not granted — network name and scanning are unavailable"
             )
-        }
-
-        // Resume monitoring if it was on when the app last quit.
-        if settings.monitoringEnabled {
-            manager.start()
         }
     }
 
