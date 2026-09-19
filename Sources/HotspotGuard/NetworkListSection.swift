@@ -163,6 +163,7 @@ private struct NetworkRow: View {
             .font(.system(size: 9))
             .foregroundStyle(index == 0 ? .quaternary : .secondary)
             .disabled(index == 0)
+            .help("Move up in priority")
 
             Button {
                 model.moveNetwork(from: index, offset: 1)
@@ -173,6 +174,7 @@ private struct NetworkRow: View {
             .font(.system(size: 9))
             .foregroundStyle(isLast ? .quaternary : .secondary)
             .disabled(isLast)
+            .help("Move down in priority")
 
             Button {
                 model.removeNetwork(network)
