@@ -143,13 +143,7 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
 
     /// Folds away the differences that are invisible on screen.
     public static func normalize(_ ssid: String) -> String {
-        ssid
-            .replacingOccurrences(of: "\u{2019}", with: "'") // right single quote
-            .replacingOccurrences(of: "\u{2018}", with: "'") // left single quote
-            .replacingOccurrences(of: "\u{02BC}", with: "'") // modifier letter apostrophe
-            .replacingOccurrences(of: "\u{00A0}", with: " ") // non-breaking space
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+        ssid.foldingTypography().lowercased()
     }
 
     /// Runs on `queue`. Synchronous and blocking by design.
