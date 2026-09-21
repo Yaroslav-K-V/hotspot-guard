@@ -25,12 +25,7 @@ public protocol PasswordStorage: Sendable {
 /// identical on screen and are pure trip hazards as keys.
 public enum SSIDKey {
     public static func normalize(_ ssid: String) -> String {
-        ssid
-            .replacingOccurrences(of: "\u{2019}", with: "'") // right single quote
-            .replacingOccurrences(of: "\u{2018}", with: "'") // left single quote
-            .replacingOccurrences(of: "\u{02BC}", with: "'") // modifier letter apostrophe
-            .replacingOccurrences(of: "\u{00A0}", with: " ") // non-breaking space
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        ssid.foldingTypography()
             // NFC, so "é" written as e+◌́ keys the same as the single codepoint.
             .precomposedStringWithCanonicalMapping
     }
