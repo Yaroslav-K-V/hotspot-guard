@@ -27,6 +27,14 @@ public enum KeychainError: LocalizedError, Equatable {
 /// signature, so rebuilding the app changes its identity and the system will
 /// prompt for permission again. Signing with a stable identity avoids this.
 public enum KeychainHelper {
+    /// In-memory mock keychain store when `HOTSPOTGUARD_DEV_MOCK_KEYCHAIN=1` is set.
+    private static var mockStore: [String: [String: String]] = [:]
+    private static let mockLock = NSLock()
+
+    private static var isMockEnabled: Bool {
+        ProcessInfo.processInfo.environment["HOTSPOTGUARD_DEV_MOCK_KEYCHAIN"] == "1"
+    }
+
     /// Default service name. Falls back to a fixed string when there is no
     /// bundle (e.g. `swift run`, or a future CLI build).
     public static var defaultService: String {
@@ -43,6 +51,20 @@ public enum KeychainHelper {
         service: String = defaultService,
         account: String
     ) throws {
+        if isMockEnabled {
+            mockLock.lock()
+            defer { mockLock.unlock() }
+            if password.isEmpty {
+                mockStore[service]?[account] = nil
+            } else {
+                if mockStore[service] == nil {
+                    mockStore[service] = [:]
+                }
+                mockStore[service]?[account] = password
+            }
+            return
+        }
+
         guard !password.isEmpty else {
             try deletePassword(service: service, account: account)
             return
@@ -86,6 +108,12 @@ public enum KeychainHelper {
         service: String = defaultService,
         account: String
     ) throws -> String? {
+        if isMockEnabled {
+            mockLock.lock()
+            defer { mockLock.unlock() }
+            return mockStore[service]?[account]
+        }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -116,6 +144,13 @@ public enum KeychainHelper {
         service: String = defaultService,
         account: String
     ) throws {
+        if isMockEnabled {
+            mockLock.lock()
+            defer { mockLock.unlock() }
+            mockStore[service]?[account] = nil
+            return
+        }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -142,6 +177,12 @@ public enum KeychainHelper {
     /// under the typed spelling creates a *second* item. Listing the raw account
     /// names is the only way to see that divergence and repair it.
     public static func allAccounts(service: String = defaultService) throws -> [String] {
+        if isMockEnabled {
+            mockLock.lock()
+            defer { mockLock.unlock() }
+            return Array(mockStore[service]?.keys ?? [:].keys)
+        }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -168,6 +209,12 @@ public enum KeychainHelper {
     /// Fetches both the attributes and the data in a single query to avoid
     /// N+1 lookups when migrating all stored keys.
     public static func allAccountsAndPasswords(service: String = defaultService) throws -> [String: String] {
+        if isMockEnabled {
+            mockLock.lock()
+            defer { mockLock.unlock() }
+            return mockStore[service] ?? [:]
+        }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
