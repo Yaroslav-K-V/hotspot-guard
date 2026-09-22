@@ -1145,6 +1145,33 @@ do {
     TestRunner.expectEqual(receivedStatus, .denied, "passes the correct status to the callback")
 }
 
+TestRunner.suite("LocationAuthorization.isAuthorized")
+
+do {
+    let fakeManager = FakeLocationManager()
+    let auth = LocationAuthorization(manager: fakeManager)
+
+    fakeManager.authStatus = .authorized
+    TestRunner.expect(auth.isAuthorized, ".authorized returns true")
+
+    fakeManager.authStatus = .authorizedAlways
+    TestRunner.expect(auth.isAuthorized, ".authorizedAlways returns true")
+
+    fakeManager.authStatus = .notDetermined
+    TestRunner.expect(!auth.isAuthorized, ".notDetermined returns false")
+
+    fakeManager.authStatus = .restricted
+    TestRunner.expect(!auth.isAuthorized, ".restricted returns false")
+
+    fakeManager.authStatus = .denied
+    TestRunner.expect(!auth.isAuthorized, ".denied returns false")
+
+    if #available(macOS 10.15, *) {
+        fakeManager.authStatus = .authorizedWhenInUse
+        TestRunner.expect(!auth.isAuthorized, ".authorizedWhenInUse returns false")
+    }
+}
+
 // MARK: - HTTP Fallback & Debouncer
 
 TestRunner.suite("TCPConnectivityProbe.fallbackHTTPCheck")
