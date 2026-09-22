@@ -71,7 +71,7 @@ public enum KeychainHelper {
             // The password is only needed while the user is logged in and the
             // machine is unlocked; this is the least-permissive class that
             // still lets monitoring run unattended after unlock.
-            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             let addStatus = SecItemAdd(attributes as CFDictionary, nil)
             guard addStatus == errSecSuccess else {
                 throw KeychainError.unexpectedStatus(addStatus)
