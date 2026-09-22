@@ -271,7 +271,7 @@ private struct StatisticsSection: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(manager.lastCheck.map { Self.timeFormatter.string(from: $0) } ?? "—")
+                Text(manager.lastCheck.map { DateFormatter.timeFormatter.string(from: $0) } ?? "—")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
@@ -288,12 +288,6 @@ private struct StatisticsSection: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
     }
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
 
     private static func intervalText(_ interval: TimeInterval) -> String {
         if interval < 60 { return "\(Int(interval))s" }

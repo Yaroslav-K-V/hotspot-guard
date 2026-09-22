@@ -25,14 +25,8 @@ public struct LogEvent: Identifiable, Sendable, Equatable {
     /// `14:03:22` — history is only ever about the current session, so the date
     /// part would be noise.
     public var formattedTime: String {
-        LogEvent.timeFormatter.string(from: timestamp)
+        DateFormatter.timeFormatter.string(from: timestamp)
     }
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
 }
 
 /// Fixed-capacity ring buffer of recent events, newest first.
