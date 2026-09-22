@@ -77,7 +77,59 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
     // `CWWiFiClient`/`CWInterface` are not Sendable. Every access is funnelled
     // through this one serial queue, which is what makes the `@unchecked`
     // conformance sound.
-    private let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.corewlan")
+    private let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.corewlan", qos: .utility)
+
+    private actor ScanDebouncer {
+        private var isScanning = false
+        private var lastScanTime: Date = Date.distantPast
+        private var pendingTask: Task<Bool, Never>? // Returns whether this caller actually executes the scan
+
+        /// Throws CancellationError if this request is discarded as redundant.
+        func debounce(window: TimeInterval = 5.0) async throws {
+            let now = Date()
+            let elapsed = now.timeIntervalSince(lastScanTime)
+
+            if elapsed >= window && !isScanning {
+                isScanning = true
+                return // Proceed to scan
+            }
+
+            if let existing = pendingTask {
+                // A trailing execution is already queued. We are a redundant intermediate request.
+                // Wait for the trailing execution to finish, then throw to discard ourselves.
+                _ = await existing.value
+                throw CancellationError()
+            }
+
+            let task = Task<Bool, Never> {
+                let currentElapsed = Date().timeIntervalSince(lastScanTime)
+                if currentElapsed < window {
+                    try? await Task.sleep(nanoseconds: UInt64((window - currentElapsed) * 1_000_000_000))
+                }
+
+                // Wait for any active scan to complete before starting our trailing scan
+                while isScanning {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
+                return true
+            }
+            pendingTask = task
+            let shouldScan = await task.value
+            pendingTask = nil
+
+            if shouldScan {
+                isScanning = true
+            } else {
+                throw CancellationError()
+            }
+        }
+
+        func markScanComplete() {
+            isScanning = false
+            lastScanTime = Date()
+        }
+    }
+    private let debouncer = ScanDebouncer()
 
     public init() {}
 
@@ -98,6 +150,15 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
     }
 
     public func associate(ssid: String, password: String) async throws {
+        do {
+            try await debouncer.debounce()
+        } catch {
+            throw WiFiError.associationFailed("Scan debounced")
+        }
+        defer {
+            Task { await debouncer.markScanComplete() }
+        }
+
         let slept = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
             queue.async {
                 do {

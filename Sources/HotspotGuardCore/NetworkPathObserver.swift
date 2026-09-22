@@ -19,7 +19,7 @@ public final class SystemNetworkPathObserver: NetworkPathObserver, @unchecked Se
     // NWPathMonitor is not Sendable and must not be restarted after cancel, so
     // a fresh monitor is created per start() and all access is serialised on
     // `queue` — which is what makes the @unchecked conformance sound.
-    private let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.path")
+    private let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.path", qos: .utility)
     private var monitor: NWPathMonitor?
 
     public init() {}

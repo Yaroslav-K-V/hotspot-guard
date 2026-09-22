@@ -74,19 +74,26 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
             return .offline
         }
 
-        guard tcp.status == .online else { return .offline }
-        guard let portalDetector else { return tcp }
+        var finalResult = tcp
+        if finalResult.status == .offline {
+            finalResult = await Self.fallbackHTTPCheck(timeout: timeout)
+        }
+        if finalResult.status == .captivePortal {
+            return finalResult
+        }
+        guard finalResult.status == .online else { return .offline }
+        guard let portalDetector else { return finalResult }
 
         // Only worth asking once TCP works: with no route at all, the portal
         // check would just burn another timeout confirming what we know.
         if await portalDetector.isIntercepted(timeout: timeout) {
             return ConnectivityResult(
                 status: .captivePortal,
-                latency: tcp.latency,
-                respondingHost: tcp.respondingHost
+                latency: finalResult.latency,
+                respondingHost: finalResult.respondingHost
             )
         }
-        return tcp
+        return finalResult
     }
 
     private static func connect(
@@ -104,7 +111,7 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
             port: port,
             using: NWParameters(tls: nil, tcp: tcpOptions)
         )
-        let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.probe.\(endpoint.host)")
+        let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.probe.\(endpoint.host)", qos: .utility)
 
         // Measured with a monotonic clock: the wall clock can jump backwards
         // over an NTP correction and produce a negative latency.
@@ -141,6 +148,90 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
 
                 // Backstop: `connectionTimeout` covers the handshake, but not
                 // every path through Network.framework reports a state change.
+                queue.asyncAfter(deadline: .now() + timeout + 0.5) {
+                    resumer.finish(.offline)
+                }
+            }
+        } onCancel: {
+            connection.cancel()
+        }
+    }
+
+    /// Lightweight HTTP fallback via `NWConnection` directly, avoiding `URLSession` overhead.
+    /// Checks Apple's standard captive portal endpoint. Validates HTTP 200 and the presence
+    /// of the word "Success" in the body payload. Used strictly when primary TCP checks fail.
+    private static func fallbackHTTPCheck(timeout: TimeInterval) async -> ConnectivityResult {
+        let host = "captive.apple.com"
+        let port = NWEndpoint.Port(rawValue: 80)!
+
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.connectionTimeout = max(1, Int(timeout.rounded(.up)))
+        tcpOptions.noDelay = true
+
+        let connection = NWConnection(
+            host: NWEndpoint.Host(host),
+            port: port,
+            using: NWParameters(tls: nil, tcp: tcpOptions)
+        )
+        let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.probe.httpfallback", qos: .utility)
+
+        let started = ContinuousClock.now
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<ConnectivityResult, Never>) in
+                let resumer = SingleResume(continuation) { connection.cancel() }
+
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        let requestString = "GET /hotspot-detect.html HTTP/1.1\r\nHost: captive.apple.com\r\nConnection: close\r\n\r\n"
+                        let data = requestString.data(using: .utf8)!
+
+                        connection.send(content: data, completion: .contentProcessed({ error in
+                            if error != nil {
+                                resumer.finish(.offline)
+                            } else {
+                                // To avoid recursive capturing and mutating local vars inside escaping closures,
+                                // we define a dedicated actor or class state. However, since the payload is usually tiny
+                                // and single-chunk, we can just do one large read. Apple's captive payload is very small.
+                                connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { content, _, _, error in
+                                    if error != nil {
+                                        resumer.finish(.offline)
+                                        return
+                                    }
+                                    guard let content = content, let responseStr = String(data: content, encoding: .utf8) else {
+                                        resumer.finish(.offline)
+                                        return
+                                    }
+                                    let is200OK = responseStr.contains("200 OK") || responseStr.contains("200 ok")
+                                    let containsSuccess = responseStr.localizedCaseInsensitiveContains("Success")
+                                    if is200OK && containsSuccess {
+                                        resumer.finish(ConnectivityResult(
+                                            status: .online,
+                                            latency: started.duration(to: ContinuousClock.now),
+                                            respondingHost: host
+                                        ))
+                                    } else {
+                                        resumer.finish(ConnectivityResult(
+                                            status: .captivePortal,
+                                            latency: started.duration(to: ContinuousClock.now),
+                                            respondingHost: host
+                                        ))
+                                    }
+                                }
+                            }
+                        }))
+                    case .failed, .cancelled, .waiting:
+                        resumer.finish(.offline)
+                    case .setup, .preparing:
+                        break
+                    @unknown default:
+                        break
+                    }
+                }
+
+                connection.start(queue: queue)
+
                 queue.asyncAfter(deadline: .now() + timeout + 0.5) {
                     resumer.finish(.offline)
                 }

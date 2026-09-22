@@ -19,6 +19,7 @@ let package = Package(
     products: [
         .library(name: "HotspotGuardCore", targets: ["HotspotGuardCore"]),
         .executable(name: "HotspotGuard", targets: ["HotspotGuard"]),
+        .executable(name: "HotspotGuardCLI", targets: ["HotspotGuardCLI"]),
     ],
     targets: [
         // Monitoring/reconnection logic. Imports Foundation, Network, CoreWLAN,
@@ -28,6 +29,9 @@ let package = Package(
 
         // The menu bar app: everything AppKit/SwiftUI lives here.
         .executableTarget(name: "HotspotGuard", dependencies: ["HotspotGuardCore"]),
+
+        // Headless CLI target linking only the core logic.
+        .executableTarget(name: "HotspotGuardCLI", dependencies: ["HotspotGuardCore"]),
 
         // Tests ship as an executable rather than a `.testTarget` on purpose:
         // XCTest and swift-testing are both bundled with Xcode, and this
