@@ -21,8 +21,10 @@ public struct ProbeEndpoint: Sendable, Equatable {
         self.port = port
     }
 
-    /// Cloudflare DNS over TLS and Google DNS. Two providers so one operator
-    /// having a bad day does not read as "the internet is down".
+    /// Cloudflare DNS over TLS and Google DNS.
+    ///
+    /// Two providers so one operator having a bad day does not read as "the
+    /// internet is down".
     public static let defaults: [ProbeEndpoint] = [
         ProbeEndpoint(host: "1.1.1.1", port: 443),
         ProbeEndpoint(host: "8.8.8.8", port: 53),
@@ -47,25 +49,55 @@ public protocol CaptivePortalDetector: Sendable {
 /// through and rewrites HTTP, so a successful handshake is followed by a
 /// ``CaptivePortalDetector`` check.
 public struct TCPConnectivityProbe: ConnectivityProbe {
+    /// One connection attempt against an endpoint.
+    ///
+    /// Injectable because "the network is down" cannot be faked reliably from
+    /// a test: even TEST-NET-1 (RFC 5737) answers when a VPN or transparent
+    /// proxy intercepts all connections. Tests pass a connector that reports
+    /// offline on demand instead of depending on the machine's network.
+    public typealias Connector = @Sendable (ProbeEndpoint, TimeInterval) async -> ConnectivityResult
+
+    /// Second opinion when every TCP handshake fails.
+    ///
+    /// Injectable for the same reason as ``Connector``: the real check hits
+    /// the network, so tests stub it instead of depending on the machine
+    /// being offline.
+    public typealias FallbackCheck = @Sendable (TimeInterval) async -> ConnectivityResult
+
     private let endpoints: [ProbeEndpoint]
     private let portalDetector: CaptivePortalDetector?
+    private let connector: Connector
+    private let fallback: FallbackCheck
 
     public init(
         endpoints: [ProbeEndpoint] = ProbeEndpoint.defaults,
-        portalDetector: CaptivePortalDetector? = AppleCaptivePortalDetector()
+        portalDetector: CaptivePortalDetector? = AppleCaptivePortalDetector(),
+        connector: Connector? = nil,
+        fallback: FallbackCheck? = nil
     ) {
         self.endpoints = endpoints
         self.portalDetector = portalDetector
+        // Wrapped in a @Sendable closure: a bare function reference is not
+        // @Sendable, and the task group hops domains with it.
+        self.connector =
+            connector ?? { @Sendable endpoint, timeout in
+                await Self.connect(to: endpoint, timeout: timeout)
+            }
+        self.fallback =
+            fallback ?? { @Sendable timeout in
+                await Self.fallbackHTTPCheck(timeout: timeout)
+            }
     }
 
     public func check(timeout: TimeInterval = Defaults.probeTimeout) async -> ConnectivityResult {
         guard !endpoints.isEmpty else { return .offline }
 
+        let connector = connector
         // Race the endpoints: the first success wins and cancels the rest, so
         // total latency is bounded by `timeout` rather than by their sum.
         let tcp: ConnectivityResult = await withTaskGroup(of: ConnectivityResult.self) { group in
             for endpoint in endpoints {
-                group.addTask { await Self.connect(to: endpoint, timeout: timeout) }
+                group.addTask { await connector(endpoint, timeout) }
             }
             for await result in group where result.status == .online {
                 group.cancelAll()
@@ -76,7 +108,7 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
 
         var finalResult = tcp
         if finalResult.status == .offline {
-            finalResult = await Self.fallbackHTTPCheck(timeout: timeout)
+            finalResult = await fallback(timeout)
         }
         if finalResult.status == .captivePortal {
             return finalResult
@@ -124,11 +156,12 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        resumer.finish(ConnectivityResult(
-                            status: .online,
-                            latency: started.duration(to: ContinuousClock.now),
-                            respondingHost: endpoint.host
-                        ))
+                        resumer.finish(
+                            ConnectivityResult(
+                                status: .online,
+                                latency: started.duration(to: ContinuousClock.now),
+                                respondingHost: endpoint.host
+                            ))
                     case .failed, .cancelled:
                         resumer.finish(.offline)
                     case .waiting:
@@ -158,6 +191,7 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
     }
 
     /// Lightweight HTTP fallback via `NWConnection` directly, avoiding `URLSession` overhead.
+    ///
     /// Checks Apple's standard captive portal endpoint. Validates HTTP 200 and the presence
     /// of the word "Success" in the body payload. Used strictly when primary TCP checks fail.
     private static func fallbackHTTPCheck(timeout: TimeInterval) async -> ConnectivityResult {
@@ -184,43 +218,51 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
                 connection.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
-                        let requestString = "GET /hotspot-detect.html HTTP/1.1\r\nHost: captive.apple.com\r\nConnection: close\r\n\r\n"
+                        let requestString =
+                            "GET /hotspot-detect.html HTTP/1.1\r\nHost: captive.apple.com\r\nConnection: close\r\n\r\n"
                         let data = requestString.data(using: .utf8)!
 
-                        connection.send(content: data, completion: .contentProcessed({ error in
-                            if error != nil {
-                                resumer.finish(.offline)
-                            } else {
-                                // To avoid recursive capturing and mutating local vars inside escaping closures,
-                                // we define a dedicated actor or class state. However, since the payload is usually tiny
-                                // and single-chunk, we can just do one large read. Apple's captive payload is very small.
-                                connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { content, _, _, error in
-                                    if error != nil {
-                                        resumer.finish(.offline)
-                                        return
-                                    }
-                                    guard let content = content, let responseStr = String(data: content, encoding: .utf8) else {
-                                        resumer.finish(.offline)
-                                        return
-                                    }
-                                    let is200OK = responseStr.contains("200 OK") || responseStr.contains("200 ok")
-                                    let containsSuccess = responseStr.localizedCaseInsensitiveContains("Success")
-                                    if is200OK && containsSuccess {
-                                        resumer.finish(ConnectivityResult(
-                                            status: .online,
-                                            latency: started.duration(to: ContinuousClock.now),
-                                            respondingHost: host
-                                        ))
-                                    } else {
-                                        resumer.finish(ConnectivityResult(
-                                            status: .captivePortal,
-                                            latency: started.duration(to: ContinuousClock.now),
-                                            respondingHost: host
-                                        ))
+                        connection.send(
+                            content: data,
+                            completion: .contentProcessed({ error in
+                                if error != nil {
+                                    resumer.finish(.offline)
+                                } else {
+                                    // To avoid recursive capturing and mutating local vars inside escaping closures,
+                                    // we define a dedicated actor or class state. However, since the payload is usually tiny
+                                    // and single-chunk, we can just do one large read. Apple's captive payload is very small.
+                                    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+                                        content, _, _, error in
+                                        if error != nil {
+                                            resumer.finish(.offline)
+                                            return
+                                        }
+                                        guard let content = content,
+                                            let responseStr = String(data: content, encoding: .utf8)
+                                        else {
+                                            resumer.finish(.offline)
+                                            return
+                                        }
+                                        let is200OK = responseStr.contains("200 OK") || responseStr.contains("200 ok")
+                                        let containsSuccess = responseStr.localizedCaseInsensitiveContains("Success")
+                                        if is200OK && containsSuccess {
+                                            resumer.finish(
+                                                ConnectivityResult(
+                                                    status: .online,
+                                                    latency: started.duration(to: ContinuousClock.now),
+                                                    respondingHost: host
+                                                ))
+                                        } else {
+                                            resumer.finish(
+                                                ConnectivityResult(
+                                                    status: .captivePortal,
+                                                    latency: started.duration(to: ContinuousClock.now),
+                                                    respondingHost: host
+                                                ))
+                                        }
                                     }
                                 }
-                            }
-                        }))
+                            }))
                     case .failed, .cancelled, .waiting:
                         resumer.finish(.offline)
                     case .setup, .preparing:
@@ -274,7 +316,7 @@ public struct AppleCaptivePortalDetector: CaptivePortalDetector {
                 return true
             }
 
-            let body = String(decoding: data, as: UTF8.self)
+            let body = (String(bytes: data, encoding: .utf8) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return body != Self.expectedBody
         } catch {

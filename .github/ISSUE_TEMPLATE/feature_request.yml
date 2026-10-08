@@ -1,0 +1,28 @@
+name: Пропозиція
+description: Ідея чи покращення
+title: "[Фіча] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Яку проблему це вирішує?
+      description: Опишіть ситуацію, в якій поточна поведінка заважає
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Пропозиція
+      description: Як це має працювати
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативи
+      description: Які обходи ви пробували або розглядали
+    validations:
+      required: false

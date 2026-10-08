@@ -1,0 +1,42 @@
+[
+    {
+        "name": "bug",
+        "color": "d73a4a",
+        "description": "Щось працює не так"
+    },
+    {
+        "name": "enhancement",
+        "color": "a2eeef",
+        "description": "Нова можливість чи покращення"
+    },
+    {
+        "name": "documentation",
+        "color": "0075ca",
+        "description": "README, AGENTS.md, docs/, коментарі"
+    },
+    {
+        "name": "ci",
+        "color": "0e8a16",
+        "description": "CI, релізи, скрипти, tooling"
+    },
+    {
+        "name": "security",
+        "color": "d93f0b",
+        "description": "Keychain, підпис, приватність"
+    },
+    {
+        "name": "performance",
+        "color": "f9d0c4",
+        "description": "Швидкодія, таймінги, батарея"
+    },
+    {
+        "name": "question",
+        "color": "d876e3",
+        "description": "Питання, не баг"
+    },
+    {
+        "name": "needs-info",
+        "color": "bfdadc",
+        "description": "Чекаємо на деталі від автора issue"
+    }
+]

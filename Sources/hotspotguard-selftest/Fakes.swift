@@ -1,20 +1,21 @@
-import Foundation
 import CoreLocation
+import Foundation
 import HotspotGuardCore
 import UserNotifications
+
 extension ConnectivityResult {
-    static func online(ms: Int = 25) -> ConnectivityResult {
+    static func online(milliseconds: Int = 25) -> ConnectivityResult {
         ConnectivityResult(
             status: .online,
-            latency: .milliseconds(ms),
+            latency: .milliseconds(milliseconds),
             respondingHost: "1.1.1.1"
         )
     }
 
-    static func portal(ms: Int = 30) -> ConnectivityResult {
+    static func portal(milliseconds: Int = 30) -> ConnectivityResult {
         ConnectivityResult(
             status: .captivePortal,
-            latency: .milliseconds(ms),
+            latency: .milliseconds(milliseconds),
             respondingHost: "1.1.1.1"
         )
     }
@@ -79,12 +80,16 @@ final class ManualSleepObserver: SleepWakeObserver, @unchecked Sendable {
     }
 
     func emitSleep() {
-        lock.lock(); let handler = onSleep; lock.unlock()
+        lock.lock()
+        let handler = onSleep
+        lock.unlock()
         handler?()
     }
 
     func emitWake() {
-        lock.lock(); let handler = onWake; lock.unlock()
+        lock.lock()
+        let handler = onWake
+        lock.unlock()
         handler?()
     }
 }
@@ -92,49 +97,45 @@ final class ManualSleepObserver: SleepWakeObserver, @unchecked Sendable {
 /// Captive-portal detector with a fixed answer.
 final class FakePortalDetector: CaptivePortalDetector, @unchecked Sendable {
     private let lock = NSLock()
-    private var _intercepted: Bool
+    private var lockedIntercepted: Bool
     private(set) var callCount = 0
 
     init(intercepted: Bool) {
-        self._intercepted = intercepted
+        self.lockedIntercepted = intercepted
     }
 
-    func setIntercepted(_ value: Bool) {
-        lock.lock(); _intercepted = value; lock.unlock()
-    }
-
-    // Mutation kept in a synchronous method: NSLock's lock()/unlock() are
-    // unavailable from async contexts (they block a cooperative thread).
     func isIntercepted(timeout: TimeInterval) async -> Bool {
         record()
     }
 
     private func record() -> Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         callCount += 1
-        return _intercepted
+        return lockedIntercepted
     }
 }
 
 /// Records association attempts; can be told to fail.
 final class FakeWiFiController: WiFiController, @unchecked Sendable {
     private let lock = NSLock()
-    private var _ssid: String?
-    private var _associateError: Error?
+    private var lockedSSID: String?
+    private var lockedAssociateError: Error?
     /// `nil` means the error is sticky; a number counts down and then clears.
-    private var _remainingFailures: Int?
+    private var lockedRemainingFailures: Int?
     private(set) var associateCallCount = 0
     private(set) var lastAssociatedSSID: String?
     private(set) var lastPassword: String?
 
     init(currentSSID: String? = nil, associateError: Error? = nil) {
-        self._ssid = currentSSID
-        self._associateError = associateError
+        self.lockedSSID = currentSSID
+        self.lockedAssociateError = associateError
     }
 
     func setAssociateError(_ error: Error?) {
-        lock.lock(); defer { lock.unlock() }
-        _associateError = error
+        lock.lock()
+        defer { lock.unlock() }
+        lockedAssociateError = error
     }
 
     /// Fails only the next `count` associations, then starts succeeding.
@@ -142,8 +143,9 @@ final class FakeWiFiController: WiFiController, @unchecked Sendable {
     /// Needed to model "the first network is gone but the second is fine",
     /// which a single sticky error cannot express.
     func setFailureCount(_ count: Int) {
-        lock.lock(); defer { lock.unlock() }
-        _remainingFailures = count
+        lock.lock()
+        defer { lock.unlock() }
+        lockedRemainingFailures = count
     }
 
     func currentSSID() async -> String? {
@@ -159,40 +161,44 @@ final class FakeWiFiController: WiFiController, @unchecked Sendable {
     }
 
     private func readSSID() -> String? {
-        lock.lock(); defer { lock.unlock() }
-        return _ssid
+        lock.lock()
+        defer { lock.unlock() }
+        return lockedSSID
     }
 
-    /// Returns the scripted error, if any. Synchronous so the lock is not held
-    /// across a suspension point.
+    /// Returns the scripted error, if any.
+    ///
+    /// Synchronous so the lock is not held across a suspension point.
     private func recordAssociation(ssid: String, password: String) -> Error? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         associateCallCount += 1
         lastAssociatedSSID = ssid
         lastPassword = password
 
-        if let remaining = _remainingFailures {
+        if let remaining = lockedRemainingFailures {
             if remaining <= 0 {
-                _ssid = ssid
+                lockedSSID = ssid
                 return nil
             }
-            _remainingFailures = remaining - 1
-            return _associateError
+            lockedRemainingFailures = remaining - 1
+            return lockedAssociateError
         }
 
-        if _associateError == nil { _ssid = ssid }
-        return _associateError
+        if lockedAssociateError == nil { lockedSSID = ssid }
+        return lockedAssociateError
     }
 }
 
 /// Captures notifications instead of posting them.
 final class FakeNotificationPresenter: NotificationPresenter, @unchecked Sendable {
     private let lock = NSLock()
-    private var _messages: [(title: String, body: String)] = []
+    private var lockedMessages: [(title: String, body: String)] = []
 
     var messages: [(title: String, body: String)] {
-        lock.lock(); defer { lock.unlock() }
-        return _messages
+        lock.lock()
+        defer { lock.unlock() }
+        return lockedMessages
     }
 
     var count: Int { messages.count }
@@ -204,8 +210,9 @@ final class FakeNotificationPresenter: NotificationPresenter, @unchecked Sendabl
     }
 
     private func record(title: String, body: String) {
-        lock.lock(); defer { lock.unlock() }
-        _messages.append((title, body))
+        lock.lock()
+        defer { lock.unlock() }
+        lockedMessages.append((title, body))
     }
 }
 
@@ -219,7 +226,7 @@ final class FakeNotificationPresenter: NotificationPresenter, @unchecked Sendabl
 /// the assertions do the talking.
 final class GatedProbe: ConnectivityProbe, @unchecked Sendable {
     private let lock = NSLock()
-    private var _isOpen = false
+    private var lockedIsOpen = false
     private(set) var callCount = 0
     private let answer: ConnectivityResult
     private let autoOpenAfter: Duration
@@ -230,16 +237,21 @@ final class GatedProbe: ConnectivityProbe, @unchecked Sendable {
     }
 
     func open() {
-        lock.lock(); _isOpen = true; lock.unlock()
+        lock.lock()
+        lockedIsOpen = true
+        lock.unlock()
     }
 
     private func isOpen() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return _isOpen
+        lock.lock()
+        defer { lock.unlock() }
+        return lockedIsOpen
     }
 
     private func recordCall() {
-        lock.lock(); callCount += 1; lock.unlock()
+        lock.lock()
+        callCount += 1
+        lock.unlock()
     }
 
     func check(timeout: TimeInterval) async -> ConnectivityResult {
@@ -267,16 +279,20 @@ final class InMemoryPasswordStorage: PasswordStorage, @unchecked Sendable {
     }
 
     func failWrites(_ shouldFail: Bool) {
-        lock.lock(); shouldFailWrites = shouldFail; lock.unlock()
+        lock.lock()
+        shouldFailWrites = shouldFail
+        lock.unlock()
     }
 
     func password(for account: String) throws -> String? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return items[account]
     }
 
     func setPassword(_ password: String, for account: String) throws {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         if shouldFailWrites { throw WriteFailure() }
         if password.isEmpty {
             items.removeValue(forKey: account)
@@ -293,11 +309,17 @@ final class ManualPathObserver: NetworkPathObserver, @unchecked Sendable {
     private(set) var isStarted = false
 
     func start(onChange: @escaping @Sendable (Bool) -> Void) {
-        lock.lock(); handler = onChange; isStarted = true; lock.unlock()
+        lock.lock()
+        handler = onChange
+        isStarted = true
+        lock.unlock()
     }
 
     func stop() {
-        lock.lock(); handler = nil; isStarted = false; lock.unlock()
+        lock.lock()
+        handler = nil
+        isStarted = false
+        lock.unlock()
     }
 
     func emit(isSatisfied: Bool) {
@@ -315,27 +337,21 @@ func makeTestDefaults(_ name: String) -> UserDefaults {
     return defaults
 }
 
-import UserNotifications
-
 /// Captures user notification center calls instead of executing them.
 final class FakeUserNotificationCenter: UserNotificationCenterProtocol, @unchecked Sendable {
     private let lock = NSLock()
-    private var _authorizationError: Error?
+    private var authorizationError: Error?
     private(set) var requestAuthorizationCallCount = 0
 
     init(authorizationError: Error? = nil) {
-        self._authorizationError = authorizationError
-    }
-
-    func setAuthorizationError(_ error: Error?) {
-        lock.lock(); defer { lock.unlock() }
-        _authorizationError = error
+        self.authorizationError = authorizationError
     }
 
     func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         requestAuthorizationCallCount += 1
-        if let error = _authorizationError {
+        if let error = authorizationError {
             throw error
         }
         return true

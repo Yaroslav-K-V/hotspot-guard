@@ -61,8 +61,10 @@ public final class LocationAuthorization: NSObject, CLLocationManagerDelegate {
         self.init(manager: CLLocationManager())
     }
 
-    /// Prompts if the user has not decided yet. A no-op once decided —
-    /// re-requesting after a denial does nothing, by design of the system.
+    /// Prompts if the user has not decided yet.
+    ///
+    /// A no-op once decided — re-requesting after a denial does nothing, by
+    /// design of the system.
     public func request(onChange: (@MainActor (CLAuthorizationStatus) -> Void)? = nil) {
         self.onChange = onChange
         guard status == .notDetermined else {

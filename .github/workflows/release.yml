@@ -1,0 +1,51 @@
+name: Release
+
+# Tag-driven releases: push a v* tag and this builds the app bundle, zips it,
+# and creates a GitHub Release whose notes are generated automatically from
+# the commits and PRs since the previous tag.
+#
+#   git tag v1.1.0 && git push origin v1.1.0
+#
+# With DEVELOPER_ID configured as a repo secret the same pipeline signs for
+# real; without it the build is ad-hoc signed, exactly like a local build.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Guard against tags created by hand: the bundle version must agree
+      # with the tag, which scripts/release.sh enforces locally.
+      - name: Verify tag matches bundle version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PLIST_VERSION="$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)"
+          if [ "$TAG_VERSION" != "$PLIST_VERSION" ]; then
+            echo "Tag says $TAG_VERSION but Info.plist says $PLIST_VERSION"
+            exit 1
+          fi
+
+      - name: Build and sign the app bundle
+        env:
+          DEVELOPER_ID: ${{ secrets.DEVELOPER_ID }}
+        run: ./scripts/build-app.sh
+
+      - name: Zip the bundle
+        run: ditto -c -k --keepParent .build/HotspotGuard.app .build/HotspotGuard.zip
+
+      - name: Create GitHub release with generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          .build/HotspotGuard.zip
+          --title "$GITHUB_REF_NAME"
+          --generate-notes

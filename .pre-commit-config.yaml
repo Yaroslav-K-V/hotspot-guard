@@ -1,0 +1,46 @@
+# Pre-commit hooks for HotspotGuard.
+#
+# Install once per clone:
+#   brew install pre-commit
+#   pre-commit install
+#
+# Only fast gates run on commit. Periphery (dead-code) intentionally stays out:
+# it needs a full index build and takes minutes — that is CI's job, not a
+# commit hook's.
+repos:
+  - repo: local
+    hooks:
+      - id: swift-format-check
+        name: swift-format check
+        entry: ./scripts/format.sh --check
+        language: system
+        files: \.swift$
+        pass_filenames: false
+
+      - id: swiftlint
+        name: SwiftLint
+        entry: ./scripts/lint.sh
+        language: system
+        files: \.swift$
+        pass_filenames: false
+
+      - id: jscpd
+        name: jscpd copy-paste detection
+        entry: ./scripts/duplicates.sh
+        language: system
+        files: \.swift$
+        pass_filenames: false
+
+      - id: test-layout
+        name: selftest layout convention
+        entry: ./scripts/check-test-layout.sh
+        language: system
+        files: ^Sources/hotspotguard-selftest/.*\.swift$
+        pass_filenames: false
+
+      - id: agents-md
+        name: AGENTS.md honesty
+        entry: ./scripts/check-agents-md.sh
+        language: system
+        files: ^(AGENTS\.md|scripts/.*)$
+        pass_filenames: false

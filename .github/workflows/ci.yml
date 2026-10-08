@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Two jobs run in parallel on macOS runners; each stays well under ten
+# minutes, so a red result lands while the change is still fresh.
+
+jobs:
+  quality:
+    name: Format, lint, duplication, dead code, test layout
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          command -v swiftlint >/dev/null 2>&1 || brew install swiftlint
+          command -v swift-format >/dev/null 2>&1 || brew install swift-format
+          command -v periphery >/dev/null 2>&1 || brew install periphery
+
+      - name: Formatting
+        run: ./scripts/format.sh --check
+
+      - name: SwiftLint
+        run: ./scripts/lint.sh
+
+      - name: Copy-paste detection
+        run: ./scripts/duplicates.sh
+
+      - name: Test layout convention
+        run: ./scripts/check-test-layout.sh
+
+      - name: AGENTS.md honesty
+        run: ./scripts/check-agents-md.sh
+
+      - name: API docs freshness
+        run: ./scripts/generate-api-docs.sh --check
+
+      - name: Dead code
+        run: ./scripts/dead-code.sh
+
+  test:
+    name: Build and selftest
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Restoring the previous build directory keeps builds incremental;
+      # step timings below go to the job summary so build performance is
+      # tracked on every run.
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-spm-
+
+      - name: Build
+        run: |
+          start=$(date +%s)
+          swift build
+          echo "**swift build**: $(( $(date +%s) - start ))s" >> "$GITHUB_STEP_SUMMARY"
+
+      # 199 checks. Keychain suites skip gracefully when the runner's
+      # keychain is unavailable, so no secrets or entitlements are needed.
+      - name: Selftest
+        run: |
+          start=$(date +%s)
+          swift run hotspotguard-selftest
+          echo "**selftest**: $(( $(date +%s) - start ))s" >> "$GITHUB_STEP_SUMMARY"
+
+      # Five more identical runs: any change in exit status or check count
+      # means a test secretly depends on timing, network, or machine state.
+      - name: Flakiness gate
+        run: ./scripts/flaky-check.sh
+
+      # Rebuilds with coverage instrumentation in a separate scratch path,
+      # reports HotspotGuardCore line coverage, and fails under the threshold.
+      - name: Coverage gate
+        run: ./scripts/coverage.sh

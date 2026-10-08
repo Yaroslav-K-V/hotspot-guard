@@ -14,7 +14,9 @@ import Observation
 @Observable
 public final class AppSettings {
     private enum Key {
-        /// Pre-1.1 single-network key. Read once for migration, then left alone.
+        /// Pre-1.1 single-network key.
+        ///
+        /// Read once for migration, then left alone.
         static let legacySSID = "hotspotSSID"
         static let networks = "hotspotNetworks"
         static let checkInterval = "checkInterval"
@@ -102,9 +104,10 @@ public final class AppSettings {
     /// silently orphan a saved password and leave the user staring at an empty
     /// list wondering where their hotspot went.
     private static func loadNetworks(from defaults: UserDefaults) -> [HotspotNetwork] {
-        if let data = defaults.data(forKey: Key.networks),
-           let decoded = try? JSONDecoder().decode([HotspotNetwork].self, from: data) {
-            return decoded
+        if let data = defaults.data(forKey: Key.networks) {
+            if let decoded = try? JSONDecoder().decode([HotspotNetwork].self, from: data) {
+                return decoded
+            }
         }
 
         let legacy = (defaults.string(forKey: Key.legacySSID) ?? "")

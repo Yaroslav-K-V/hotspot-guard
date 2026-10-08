@@ -14,8 +14,9 @@ enum StatusIcon {
         let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
             .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
 
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label(for: state))?
-            .withSymbolConfiguration(configuration) {
+        let configured = NSImage(systemSymbolName: symbol, accessibilityDescription: label(for: state))?
+            .withSymbolConfiguration(configuration)
+        if let image = configured {
             image.isTemplate = false
             return image
         }

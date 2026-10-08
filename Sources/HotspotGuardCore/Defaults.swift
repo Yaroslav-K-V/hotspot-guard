@@ -15,8 +15,9 @@ public enum Defaults {
     /// How long a single connectivity probe may take.
     public static let probeTimeout: TimeInterval = 2
 
-    /// Wait after associating before re-probing, so DHCP can finish. Too short
-    /// and a successful reconnect reads as a failure.
+    /// Wait after associating before re-probing, so DHCP can finish.
+    ///
+    /// Too short and a successful reconnect reads as a failure.
     public static let postAssociationDelay: Duration = .seconds(3)
 
     /// Consecutive failed reconnects before the user is notified.
@@ -45,15 +46,18 @@ public enum Defaults {
     /// flapping interface cannot drive a scan storm.
     public static let minimumPathTriggerInterval: TimeInterval = 3
 
-    /// How many latency samples to keep for the trend line. At a 10s interval
-    /// this is roughly the last five minutes.
+    /// How many latency samples to keep for the trend line.
+    ///
+    /// At a 10s interval this is roughly the last five minutes.
     public static let latencySampleCount = 30
 
     /// Grace period after waking before checking again, so Wi-Fi has time to
     /// re-associate and pick up a DHCP lease.
     public static let postWakeDelay: Duration = .seconds(5)
 
-    /// Latency above which the connection is flagged as degraded. Chosen as
-    /// the point where interactive work (SSH, calls) starts to feel wrong.
+    /// Latency above which the connection is flagged as degraded.
+    ///
+    /// Chosen as the point where interactive work (SSH, calls) starts to feel
+    /// wrong.
     public static let degradedLatencyMilliseconds = 300
 }

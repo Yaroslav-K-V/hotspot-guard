@@ -35,8 +35,10 @@ public enum KeychainHelper {
         ProcessInfo.processInfo.environment["HOTSPOTGUARD_DEV_MOCK_KEYCHAIN"] == "1"
     }
 
-    /// Default service name. Falls back to a fixed string when there is no
-    /// bundle (e.g. `swift run`, or a future CLI build).
+    /// Default service name.
+    ///
+    /// Falls back to a fixed string when there is no bundle (e.g. `swift run`,
+    /// or a future CLI build).
     public static var defaultService: String {
         Bundle.main.bundleIdentifier ?? "com.yaroslavkv.hotspotguard"
     }
@@ -139,7 +141,9 @@ public enum KeychainHelper {
         }
     }
 
-    /// Removes the item. Deleting something that is not there is not an error.
+    /// Removes the item.
+    ///
+    /// Deleting something that is not there is not an error.
     public static func deletePassword(
         service: String = defaultService,
         account: String
@@ -232,8 +236,9 @@ public enum KeychainHelper {
             var result: [String: String] = [:]
             for entry in entries {
                 if let account = entry[kSecAttrAccount as String] as? String,
-                   let data = entry[kSecValueData as String] as? Data,
-                   let password = String(data: data, encoding: .utf8) {
+                    let data = entry[kSecValueData as String] as? Data,
+                    let password = String(data: data, encoding: .utf8)
+                {
                     result[account] = password
                 }
             }

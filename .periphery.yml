@@ -1,0 +1,10 @@
+# Periphery configuration — dead code detection for HotspotGuard.
+#
+# Run via ./scripts/dead-code.sh. Periphery builds the package with the index
+# store and reports declarations that no code path references.
+#
+# HotspotGuardCore is a library product: its public API is the surface a
+# future CLI will link against, so public declarations are retained even when
+# no current target calls them. Unused internal/private declarations are still
+# reported.
+retain_public: true

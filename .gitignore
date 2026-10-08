@@ -1,4 +1,6 @@
 .build/
+.build-api-docs/
+.build-coverage/
 .swiftpm/
 Package.resolved
 *.xcodeproj

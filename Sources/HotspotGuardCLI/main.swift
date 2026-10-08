@@ -61,10 +61,11 @@ func runStatus(manager: ConnectionManager, isJSON: Bool) async {
         let statusDict: [String: Any] = [
             "state": stateString,
             "currentSSID": manager.currentSSID ?? NSNull(),
-            "lastLatency": manager.lastLatencyMilliseconds ?? NSNull()
+            "lastLatency": manager.lastLatencyMilliseconds ?? NSNull(),
         ]
         if let data = try? JSONSerialization.data(withJSONObject: statusDict, options: .prettyPrinted),
-           let string = String(data: data, encoding: .utf8) {
+            let string = String(data: data, encoding: .utf8)
+        {
             print(string)
         }
     } else {
@@ -85,7 +86,8 @@ func runNetworksList(settings: AppSettings, isJSON: Bool) {
     let networks = settings.networks.map { $0.ssid }
     if isJSON {
         if let data = try? JSONSerialization.data(withJSONObject: networks, options: .prettyPrinted),
-           let string = String(data: data, encoding: .utf8) {
+            let string = String(data: data, encoding: .utf8)
+        {
             print(string)
         }
     } else {
@@ -101,15 +103,16 @@ func runNetworksList(settings: AppSettings, isJSON: Bool) {
 }
 
 func printUsage() {
-    print("""
-    Usage: hotspotguard-cli <command> [--json]
+    print(
+        """
+        Usage: hotspotguard-cli <command> [--json]
 
-    Commands:
-      status          Shows the current state of the connection
-      check           Forces a single tick/check of the connection
-      reconnect       Forces a reconnect attempt
-      networks list   Lists the currently configured network SSIDs
-    """)
+        Commands:
+          status          Shows the current state of the connection
+          check           Forces a single tick/check of the connection
+          reconnect       Forces a reconnect attempt
+          networks list   Lists the currently configured network SSIDs
+        """)
 }
 
 struct TerminalNotifier: NotificationPresenter {

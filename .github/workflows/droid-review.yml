@@ -1,0 +1,37 @@
+name: Droid Auto Review
+
+# Automated code review on every pull request (deep pass). Two one-time
+# setup steps before this can run:
+#   1. Install the Factory Droid GitHub App and grant it this repository:
+#      https://app.factory.ai/settings/integrations/github/start
+#   2. Add the FACTORY_API_KEY repo secret (Settings > Secrets and variables
+#      > Actions); generate a key at https://app.factory.ai/settings/api-keys
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  droid-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - name: Run Droid Auto Review
+        uses: Factory-AI/droid-action@main
+        with:
+          factory_api_key: ${{ secrets.FACTORY_API_KEY }}
+          automatic_review: true

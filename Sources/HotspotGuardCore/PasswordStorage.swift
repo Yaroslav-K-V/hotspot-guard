@@ -19,10 +19,10 @@ public protocol PasswordStorage: Sendable {
 /// wrong for a key: SSIDs are case-sensitive by standard, so `MyNet` and `mynet`
 /// are different networks and must not share a password.
 ///
-/// What this does fold is the invisible stuff — the typographic apostrophe iOS
-/// puts in "Anna’s iPhone" (U+2019) versus the one a keyboard produces (U+0027),
-/// non-breaking spaces, and Unicode composition differences. Those look
-/// identical on screen and are pure trip hazards as keys.
+/// What this does fold is the invisible stuff (see
+/// ``String/foldingTypography()``) plus Unicode composition
+/// differences — those look identical on screen and are pure trip hazards as
+/// keys.
 public enum SSIDKey {
     public static func normalize(_ ssid: String) -> String {
         ssid.foldingTypography()
@@ -122,7 +122,8 @@ public struct KeychainPasswordStorage: PasswordStorage {
             // program and will not hand over an item the "previous" app
             // stored. Logged rather than swallowed — silence here looks
             // identical to "there was nothing to migrate".
-            Logger(subsystem: "HotspotGuard", category: "Keychain").error("could not migrate Keychain item — \(error.localizedDescription)")
+            Logger(subsystem: "HotspotGuard", category: "Keychain").error(
+                "could not migrate Keychain item — \(error.localizedDescription)")
             return false
         }
     }

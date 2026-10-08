@@ -27,9 +27,9 @@ struct MenuBarView: View {
             Divider()
             IntervalSection(model: model, settings: model.settings)
             Divider()
-            StatisticsSection(manager: manager, settings: model.settings)
+            StatisticsSection(manager: manager)
             Divider()
-            RecentEventsSection(log: model.log)
+            RecentEventsSection(log: model.log, flags: model.flags)
             Divider()
             ActionsSection(model: model)
         }
@@ -138,19 +138,20 @@ private struct LatencySparkline: View {
     var body: some View {
         GeometryReader { geometry in
             let maximum = max(samples.max() ?? 1, 1)
-            let stepX = samples.count > 1
+            let stepX =
+                samples.count > 1
                 ? geometry.size.width / CGFloat(samples.count - 1)
                 : geometry.size.width
 
             Path { path in
                 for (index, sample) in samples.enumerated() {
-                    let x = CGFloat(index) * stepX
+                    let pointX = CGFloat(index) * stepX
                     let ratio = CGFloat(sample) / CGFloat(maximum)
-                    let y = geometry.size.height * (1 - ratio)
+                    let pointY = geometry.size.height * (1 - ratio)
                     if index == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
+                        path.move(to: CGPoint(x: pointX, y: pointY))
                     } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
+                        path.addLine(to: CGPoint(x: pointX, y: pointY))
                     }
                 }
             }
@@ -164,8 +165,10 @@ private struct LatencySparkline: View {
 
 // MARK: - Interval
 
-/// The check interval. Networks moved out to `NetworkListSection` when the
-/// single SSID became a priority list.
+/// The check interval.
+///
+/// Networks moved out to `NetworkListSection` when the single SSID became a
+/// priority list.
 private struct IntervalSection: View {
     @Bindable var model: AppModel
     @Bindable var settings: AppSettings
@@ -201,7 +204,6 @@ private struct IntervalSection: View {
 
 private struct StatisticsSection: View {
     let manager: ConnectionManager
-    let settings: AppSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -218,10 +220,12 @@ private struct StatisticsSection: View {
             // quietly stretched the gap to minutes.
             if manager.isBackingOff {
                 HStack {
-                    Label("Backing off after \(manager.consecutiveFailures) failures",
-                          systemImage: "tortoise.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
+                    Label(
+                        "Backing off after \(manager.consecutiveFailures) failures",
+                        systemImage: "tortoise.fill"
+                    )
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
                     Spacer()
                     Text(Self.intervalText(manager.effectiveCheckInterval))
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -252,8 +256,7 @@ private struct StatisticsSection: View {
                         )
                 }
 
-                if let median = manager.medianLatencyMilliseconds,
-                   manager.recentLatencies.count > 5 {
+                if let median = manager.medianLatencyMilliseconds, manager.recentLatencies.count > 5 {
                     HStack {
                         Text("Median (last \(manager.recentLatencies.count))")
                             .font(.system(size: 10))
@@ -301,6 +304,7 @@ private struct StatisticsSection: View {
 
 private struct RecentEventsSection: View {
     let log: EventLog
+    let flags: FeatureFlags
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -310,10 +314,12 @@ private struct RecentEventsSection: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Button("History…") { showHistoryWindow() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tint)
+                if flags.isEnabled(.connectionHistory) {
+                    Button("History…") { showHistoryWindow() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tint)
+                }
             }
 
             if log.events.isEmpty {
@@ -384,10 +390,12 @@ private struct ActionsSection: View {
                 .controlSize(.small)
             }
 
-            Toggle(isOn: Binding(
-                get: { model.launchAtLogin.isEnabled },
-                set: { model.launchAtLogin.setEnabled($0) }
-            )) {
+            Toggle(
+                isOn: Binding(
+                    get: { model.launchAtLogin.isEnabled },
+                    set: { model.launchAtLogin.setEnabled($0) }
+                )
+            ) {
                 Text("Launch at Login").font(.system(size: 11))
             }
             .toggleStyle(.checkbox)
@@ -426,21 +434,5 @@ private struct ActionsSection: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-    }
-}
-
-/// Label on the left, control on the right, with consistent label width.
-private struct LabeledField<Content: View>: View {
-    let label: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .frame(width: 62, alignment: .leading)
-            content
-        }
     }
 }

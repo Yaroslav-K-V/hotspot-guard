@@ -1,0 +1,55 @@
+name: Nightly
+
+# Rolling prerelease from main, every night when something changed. Keeps the
+# cost of shipping near zero: a build users can try is never more than a day
+# old, and stable releases (./scripts/release.sh) stay deliberate. Runs can
+# also be triggered by hand from the Actions tab.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC, off the top-of-the-hour rush
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  nightly:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip when main has not moved since the last nightly
+        id: changes
+        run: |
+          git fetch --force origin tag nightly 2>/dev/null || true
+          if git rev-parse --verify --quiet refs/tags/nightly >/dev/null &&
+              [ "$(git rev-parse refs/tags/nightly)" = "$(git rev-parse HEAD)" ]; then
+            echo "No new commits since the last nightly; skipping."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the app bundle
+        if: steps.changes.outputs.changed == 'true'
+        run: ./scripts/build-app.sh
+
+      - name: Zip the bundle
+        if: steps.changes.outputs.changed == 'true'
+        run: ditto -c -k --keepParent .build/HotspotGuard.app .build/HotspotGuard.zip
+
+      - name: Move the nightly tag to main and (re)create the prerelease
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          git tag --force nightly
+          git push --force origin nightly
+          gh release create nightly .build/HotspotGuard.zip \
+            --prerelease \
+            --title "Nightly $(date -u +%Y-%m-%d)" \
+            --generate-notes

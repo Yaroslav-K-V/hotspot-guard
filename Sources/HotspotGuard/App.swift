@@ -17,6 +17,7 @@ final class AppModel {
     let credentials: CredentialsStore
     let manager: ConnectionManager
     let launchAtLogin: LaunchAtLoginController
+    let flags: FeatureFlags
     @ObservationIgnored let location: LocationAuthorization
 
     /// Location status, mirrored for the UI so it can explain why the network
@@ -27,15 +28,22 @@ final class AppModel {
         let settings = AppSettings()
         let log = EventLog()
         let credentials = CredentialsStore()
+        let flags = FeatureFlags()
 
         self.settings = settings
         self.log = log
         self.credentials = credentials
+        self.flags = flags
         self.launchAtLogin = LaunchAtLoginController()
         self.location = LocationAuthorization()
         self.manager = ConnectionManager(
             settings: settings,
             log: log,
+            // A disabled portal flag means "associated" counts as "online" —
+            // the probe simply gets no detector to ask.
+            probe: TCPConnectivityProbe(
+                portalDetector: flags.isEnabled(.captivePortalDetection) ? AppleCaptivePortalDetector() : nil
+            ),
             // AppKit lives here, not in Core — this is the whole reason
             // SleepWakeObserver is a protocol.
             sleepObserver: WorkspaceSleepWakeObserver(),
@@ -110,10 +118,12 @@ final class AppModel {
         let configured = settings.networks.filter(\.isConfigured)
         let usable = configured.filter { credentials.hasPassword(for: $0.trimmedSSID) }
         // Counts only: network names are the user's business, not the log's.
-        Logger(subsystem: "HotspotGuard", category: "App").info("\(configured.count) network(s) configured, \(usable.count) with a usable password")
+        Logger(subsystem: "HotspotGuard", category: "App").info(
+            "\(configured.count) network(s) configured, \(usable.count) with a usable password")
 
         if !configured.isEmpty, usable.count < configured.count {
-            let missing = configured
+            let missing =
+                configured
                 .filter { !credentials.hasPassword(for: $0.trimmedSSID) }
                 .map(\.trimmedSSID)
                 .joined(separator: ", ")
@@ -139,9 +149,11 @@ final class AppModel {
     func addNetwork(named ssid: String) {
         let trimmed = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard !settings.networks.contains(where: {
-            $0.trimmedSSID.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) else {
+        guard
+            !settings.networks.contains(where: {
+                $0.trimmedSSID.caseInsensitiveCompare(trimmed) == .orderedSame
+            })
+        else {
             log.append(.warning, "\(trimmed) is already in the list")
             return
         }
@@ -168,7 +180,8 @@ final class AppModel {
     func moveNetwork(from index: Int, offset: Int) {
         let target = index + offset
         guard settings.networks.indices.contains(index),
-              settings.networks.indices.contains(target) else { return }
+            settings.networks.indices.contains(target)
+        else { return }
         settings.networks.swapAt(index, target)
     }
 }
@@ -188,6 +201,11 @@ struct HotspotGuardApp: App {
         }
         .menuBarExtraStyle(.window)
 
+        // The scene stays declared unconditionally — `SceneBuilder` on this
+        // toolchain rejects a conditional `Window` — and lazily creates its
+        // content. The flag gates the entry point instead: with
+        // `connectionHistory` off, MenuBarView shows no "History…" button and
+        // this window is unreachable.
         Window("HotspotGuard History", id: HistoryWindow.id) {
             HistoryView(log: model.log)
         }

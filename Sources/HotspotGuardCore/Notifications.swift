@@ -25,8 +25,10 @@ public struct UserNotificationCenterWrapper: UserNotificationCenterProtocol {
     }
 }
 
-/// Delivers user-visible alerts. Abstracted so tests can assert that a
-/// notification was raised without actually posting one.
+/// Delivers user-visible alerts.
+///
+/// Abstracted so tests can assert that a notification was raised without
+/// actually posting one.
 public protocol NotificationPresenter: Sendable {
     func requestAuthorization() async
     func present(title: String, body: String) async
@@ -47,6 +49,7 @@ public final class UserNotificationPresenter: NotificationPresenter, @unchecked 
 
     /// `UNUserNotificationCenter.current()` raises an Objective-C exception —
     /// not a catchable Swift error — when the process has no bundle identifier.
+    ///
     /// That is exactly the case under `swift run`, so guard rather than crash.
     private var isAvailable: Bool {
         checkIsAvailable()
@@ -59,7 +62,8 @@ public final class UserNotificationPresenter: NotificationPresenter, @unchecked 
         } catch {
             // A denied or failed request is not fatal: the app keeps working,
             // it just cannot raise alerts. The event log still records failures.
-            Logger(subsystem: "HotspotGuard", category: "Notifications").error("notification authorization failed — \(error.localizedDescription)")
+            Logger(subsystem: "HotspotGuard", category: "Notifications").error(
+                "notification authorization failed — \(error.localizedDescription)")
         }
     }
 
@@ -80,7 +84,8 @@ public final class UserNotificationPresenter: NotificationPresenter, @unchecked 
         do {
             try await center.add(request)
         } catch {
-            Logger(subsystem: "HotspotGuard", category: "Notifications").error("could not post notification — \(error.localizedDescription)")
+            Logger(subsystem: "HotspotGuard", category: "Notifications").error(
+                "could not post notification — \(error.localizedDescription)")
         }
     }
 }

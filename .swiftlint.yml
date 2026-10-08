@@ -1,0 +1,58 @@
+# SwiftLint configuration for HotspotGuard.
+#
+# Run via ./scripts/lint.sh — it exports XCODE_DEFAULT_TOOLCHAIN_OVERRIDE so
+# SourceKit loads on a Command Line Tools-only machine (no Xcode installed).
+
+included:
+  - Package.swift
+  - Sources
+excluded:
+  - .build
+
+# Multi-line collection literals keep a trailing comma on purpose: appending
+# an entry then produces a one-line diff instead of touching the previous
+# entry's line.
+trailing_comma:
+  mandatory_comma: true
+
+# Technical-debt markers are allowed to land, but they must stay visible:
+# every TODO/FIXME is reported as a lint warning, so debt cannot silently
+# accumulate — resolve the marker or track it, but never lose it.
+todo:
+  severity: warning
+
+# Complexity ceiling. Keep functions small enough to hold in your head;
+# anything over the warning threshold needs to be split.
+cyclomatic_complexity:
+  warning: 10
+  error: 20
+
+# Naming conventions, enforced rather than written down and forgotten:
+# lowerCamelCase for variables/functions, UpperCamelCase for types, and no
+# one-letter names — rename instead of adding exclusions (that is why `ms`,
+# `x` and `y` became `milliseconds`, `pointX` and `pointY`).
+identifier_name:
+  min_length: 3
+  max_length:
+    warning: 60
+    error: 80
+  validates_start_with_lowercase: warning
+type_name:
+  min_length: 3
+  max_length:
+    warning: 60
+    error: 80
+
+# Size guards. Warnings fire early; errors are reserved for runaway growth.
+# The 1108-line selftest main.swift was split into per-area files
+# (<Type>Tests.swift), which let the error threshold drop to 800.
+file_length:
+  warning: 400
+  error: 800
+type_body_length:
+  warning: 350
+  error: 600
+
+line_length:
+  warning: 120
+  error: 200

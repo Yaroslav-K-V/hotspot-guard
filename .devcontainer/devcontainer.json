@@ -1,0 +1,18 @@
+{
+  // Scope, stated honestly: HotspotGuard is a macOS app — `swift build` and
+  // the selftest only run on a Mac. This container gives contributors on any
+  // OS the parts of the toolchain that are cross-platform:
+  //   * swift-format — bundled with the toolchain image (same 6.3 as brew's)
+  //   * jscpd        — copy-paste gate, via the Node feature
+  //   * pre-commit   — the hook runner itself
+  // SwiftLint stays on the Mac: lint.sh wires its SourceKit lookup to the
+  // Command Line Tools, and the macOS build it lints can't happen here anyway.
+  "name": "HotspotGuard quality gates",
+  "image": "swift:6.3-noble",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "postCreateCommand": "apt-get update && apt-get install -y --no-install-recommends pipx && pipx install pre-commit && npx --yes jscpd@4.0.5 --version"
+}

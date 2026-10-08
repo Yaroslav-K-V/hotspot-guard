@@ -1,0 +1,53 @@
+name: Помилка
+description: Щось працює не так — розкажіть, що саме
+title: "[Баг] "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Версія програми
+      description: Видно в Info.plist (CFBundleShortVersionString) або у нотатках релізу
+      placeholder: 1.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: Версія macOS
+      placeholder: "15.4"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Що сталося?
+      description: Що ви робили і що сталося натомість
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Чого ви очікували?
+    validations:
+      required: false
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Журнал подій
+      description: Меню HotspotGuard → History… — скопіюйте рядки навколо моменту проблеми
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: network
+    attributes:
+      label: Контекст мережі
+      description: Кептів-портал (готель/кафе)? VPN? Який пристрій роздає інтернет?
+    validations:
+      required: false

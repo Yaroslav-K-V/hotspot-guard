@@ -18,7 +18,8 @@ public enum WiFiError: LocalizedError, Equatable {
             return "Could not turn Wi-Fi on: \(reason)"
         case .scanFailed(let reason):
             // Location denied is by far the most common cause here, so name it.
-            return "Wi-Fi scan failed: \(reason). If this says the operation is not permitted, grant Location access in System Settings > Privacy & Security > Location Services."
+            return "Wi-Fi scan failed: \(reason). If this says the operation is not permitted,"
+                + " grant Location access in System Settings > Privacy & Security > Location Services."
         case .networkNotFound(let ssid, let visible):
             var message = "Network \"\(ssid)\" is not broadcasting."
             if visible.isEmpty {
@@ -30,12 +31,15 @@ public enum WiFiError: LocalizedError, Equatable {
                 if visible.count > 6 { message += ", …" }
                 message += "."
             }
-            if ssid.localizedCaseInsensitiveContains("iphone")
-                || ssid.localizedCaseInsensitiveContains("ipad") {
+            if ssid.localizedCaseInsensitiveContains("iphone") || ssid.localizedCaseInsensitiveContains("ipad") {
                 // Instant Hotspot: macOS lists the phone via Bluetooth even
                 // when its Wi-Fi radio is off, so it appears joinable in the
                 // system menu while being genuinely absent from the air.
-                message += " If this is an iPhone hotspot, it is probably asleep — iOS shuts the Wi-Fi radio off when nothing is connected, even with \"Allow Others to Join\" on. Open Settings › Personal Hotspot on the phone to wake it."
+                message +=
+                    " If this is an iPhone hotspot, it is probably asleep —"
+                    + " iOS shuts the Wi-Fi radio off when nothing is connected,"
+                    + " even with \"Allow Others to Join\" on."
+                    + " Open Settings › Personal Hotspot on the phone to wake it."
             }
             return message
         case .associationFailed(let reason):
@@ -202,12 +206,16 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
         }
     }
 
-    /// Folds away the differences that are invisible on screen.
+    /// Folds away the differences that are invisible on screen, then
+    /// lowercases: matching a hand-typed name against what is on the air is
+    /// case-insensitive, unlike a Keychain key (see ``SSIDKey``).
     public static func normalize(_ ssid: String) -> String {
         ssid.foldingTypography().lowercased()
     }
 
-    /// Runs on `queue`. Synchronous and blocking by design.
+    /// Runs on `queue`.
+    ///
+    /// Synchronous and blocking by design.
     private static func ensurePoweredOn() throws -> Bool {
         guard let interface = CWWiFiClient.shared().interface() else {
             throw WiFiError.noInterface
@@ -225,7 +233,9 @@ public final class CoreWLANController: WiFiController, @unchecked Sendable {
         return false
     }
 
-    /// Runs on `queue`. Synchronous and blocking by design.
+    /// Runs on `queue`.
+    ///
+    /// Synchronous and blocking by design.
     private static func performScanAndAssociation(ssid: String, password: String) throws {
         guard let interface = CWWiFiClient.shared().interface() else {
             throw WiFiError.noInterface

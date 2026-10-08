@@ -51,8 +51,10 @@ public final class ConnectionManager {
     /// not a permanent record.
     public private(set) var recentLatencies: [Int] = []
 
-    /// Median of ``recentLatencies``. Median rather than mean because one
-    /// 2000ms outlier should not redraw the whole picture.
+    /// Median of ``recentLatencies``.
+    ///
+    /// Median rather than mean because one 2000ms outlier should not redraw
+    /// the whole picture.
     public var medianLatencyMilliseconds: Int? {
         guard !recentLatencies.isEmpty else { return nil }
         let sorted = recentLatencies.sorted()
@@ -102,8 +104,10 @@ public final class ConnectionManager {
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let pathObserver: NetworkPathObserver?
     @ObservationIgnored private let sleepObserver: SleepWakeObserver?
-    /// Supplies the password for a given SSID. Takes the SSID because the list
-    /// can hold several networks, each with its own Keychain entry.
+    /// Supplies the password for a given SSID.
+    ///
+    /// Takes the SSID because the list can hold several networks, each with
+    /// its own Keychain entry.
     @ObservationIgnored private let passwordProvider: @MainActor (String) -> String?
     @ObservationIgnored private let probeTimeout: TimeInterval
     @ObservationIgnored private let postAssociationDelay: Duration
@@ -213,9 +217,12 @@ public final class ConnectionManager {
     }
 
     private func formatted(_ interval: TimeInterval) -> String {
-        interval < 60
-            ? "\(Int(interval))s"
-            : "\(Int(interval / 60))m\(Int(interval.truncatingRemainder(dividingBy: 60)) > 0 ? " \(Int(interval.truncatingRemainder(dividingBy: 60)))s" : "")"
+        guard interval >= 60 else {
+            return "\(Int(interval))s"
+        }
+        let minutes = Int(interval / 60)
+        let seconds = Int(interval.truncatingRemainder(dividingBy: 60))
+        return seconds > 0 ? "\(minutes)m\(seconds)s" : "\(minutes)m"
     }
 
     // MARK: - Sleep and wake
@@ -283,15 +290,16 @@ public final class ConnectionManager {
         guard loopTask != nil, !isWorking, !isAsleep else { return }
 
         // Rate limit: a flapping interface must not drive a scan storm.
-        if let last = lastPathTrigger,
-           Date().timeIntervalSince(last) < Defaults.minimumPathTriggerInterval {
+        if let last = lastPathTrigger, Date().timeIntervalSince(last) < Defaults.minimumPathTriggerInterval {
             return
         }
         lastPathTrigger = Date()
 
-        log.append(.info, isSatisfied
-            ? "Network route appeared — checking now"
-            : "Network route lost — checking now")
+        log.append(
+            .info,
+            isSatisfied
+                ? "Network route appeared — checking now"
+                : "Network route lost — checking now")
 
         Task { [weak self] in
             await self?.tick()
@@ -362,8 +370,9 @@ public final class ConnectionManager {
 
     /// A login portal is not an outage, and reconnecting would make it worse:
     /// re-associating drops the session the login page is served over, so the
-    /// user would be sent back to the start. The only useful action is to tell
-    /// them to log in.
+    /// user would be sent back to the start.
+    ///
+    /// The only useful action is to tell them to log in.
     private func handleCaptivePortal() async {
         let wasElsewhere = (state != .captivePortal)
         state = .captivePortal
