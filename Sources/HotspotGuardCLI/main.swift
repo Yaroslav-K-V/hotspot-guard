@@ -80,6 +80,7 @@ func runStatus(manager: ConnectionManager, isJSON: Bool) async {
     }
 }
 
+@MainActor
 func runNetworksList(settings: AppSettings, isJSON: Bool) {
     let networks = settings.networks.map { $0.ssid }
     if isJSON {
@@ -112,6 +113,7 @@ func printUsage() {
 }
 
 struct TerminalNotifier: NotificationPresenter {
+    func requestAuthorization() async {}
     func present(title: String, body: String) async {
         print("\n[NOTIFICATION] \(title)")
         print("\(body)\n")
