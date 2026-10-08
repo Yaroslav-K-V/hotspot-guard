@@ -7,7 +7,7 @@ import Foundation
 /// but a portal wants you to log in, do NOT reconnect — reconnecting would drop
 /// the very session the login page lives on".
 public struct ConnectivityResult: Sendable, Equatable {
-    public enum Status: Sendable, Equatable {
+    public enum Status: String, Sendable, Codable, Equatable {
         /// A real route to the internet.
         case online
         /// Nothing answered.

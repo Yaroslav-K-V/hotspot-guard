@@ -21,5 +21,7 @@ try await runConnectionManagerNetworksTests()
 try await runNotificationsTests()
 try await runLocationAuthorizationTests()
 try await runWiFiControllerTests()
+try await runNetworkPathObserverTests()
+try await runAnalyticsTests()
 
 exit(TestRunner.report())

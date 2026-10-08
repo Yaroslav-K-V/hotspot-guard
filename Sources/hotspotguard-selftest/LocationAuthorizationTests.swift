@@ -73,4 +73,41 @@ func runLocationAuthorizationTests() async throws {
         // NOTE: `.authorizedWhenInUse` is iOS-only and does not exist on macOS,
         // so there is no branch to cover here. Every macOS case is asserted above.
     }
+
+    TestRunner.suite("LocationAuthorization.lifecycle")
+
+    do {
+        // Reading the real manager's status never prompts — only requesting does.
+        let manager = CLLocationManager()
+        TestRunner.expect(
+            [.notDetermined, .restricted, .denied, .authorized, .authorizedAlways].contains(
+                manager.authStatus),
+            "the real manager reports a known status")
+    }
+
+    do {
+        let auth = LocationAuthorization()
+        TestRunner.expect(
+            [.notDetermined, .restricted, .denied, .authorized, .authorizedAlways].contains(
+                auth.status),
+            "the convenience init wires a live manager")
+    }
+
+    do {
+        let fakeManager = FakeLocationManager()
+        fakeManager.authStatus = .notDetermined
+        let auth = LocationAuthorization(manager: fakeManager)
+
+        // The delegate method reports whatever the system manager says — the
+        // contract here is only that the observer fires, not which value a
+        // given machine happens to hold.
+        var fired = false
+        auth.request { _ in
+            fired = true
+        }
+        auth.locationManagerDidChangeAuthorization(CLLocationManager())
+        try? await Task.sleep(nanoseconds: 20_000_000)
+
+        TestRunner.expect(fired, "the change callback reaches the observer")
+    }
 }

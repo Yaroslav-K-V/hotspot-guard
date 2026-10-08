@@ -342,6 +342,8 @@ final class FakeUserNotificationCenter: UserNotificationCenterProtocol, @uncheck
     private let lock = NSLock()
     private var authorizationError: Error?
     private(set) var requestAuthorizationCallCount = 0
+    private(set) var addCallCount = 0
+    var addError: Error?
 
     init(authorizationError: Error? = nil) {
         self.authorizationError = authorizationError
@@ -358,7 +360,12 @@ final class FakeUserNotificationCenter: UserNotificationCenterProtocol, @uncheck
     }
 
     func add(_ request: UNNotificationRequest) async throws {
-        // Not used in this test
+        lock.lock()
+        defer { lock.unlock() }
+        addCallCount += 1
+        if let error = addError {
+            throw error
+        }
     }
 }
 

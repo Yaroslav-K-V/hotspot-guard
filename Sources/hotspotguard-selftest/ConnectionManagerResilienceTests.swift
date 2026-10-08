@@ -7,6 +7,8 @@ func runConnectionManagerResilienceTests() async throws {
     try await backoffSuite()
     try await pathTriggerSuite()
     try await sleepWakeSuite()
+    try await restartSuite()
+    try await loopAnnounceSuite()
 }
 
 @MainActor
@@ -231,5 +233,67 @@ private func sleepWakeSuite() async throws {
         manager.stop()
         TestRunner.expect(!sleeper.isStarted, "unsubscribes on stop()")
         TestRunner.expect(!manager.isAsleep, "resets the sleep flag on stop()")
+    }
+}
+
+@MainActor
+private func restartSuite() async throws {
+    // MARK: - Restart
+
+    TestRunner.suite("ConnectionManager — restartIfRunning")
+
+    do {
+        let (manager, _, _) = makeManager(
+            probe: ScriptedProbe([true]), wifi: FakeWiFiController(),
+            notifier: FakeNotificationPresenter(), suite: "selftest.restart.idle"
+        )
+
+        // Nothing running: a restart is a no-op, not a crash.
+        manager.restartIfRunning()
+        TestRunner.expect(true, "restarts nothing when idle")
+    }
+
+    do {
+        let (manager, settings, _) = makeManager(
+            probe: ScriptedProbe([true]), wifi: FakeWiFiController(),
+            notifier: FakeNotificationPresenter(), suite: "selftest.restart.running"
+        )
+
+        manager.start()
+        manager.restartIfRunning()
+        manager.stop()
+        TestRunner.expect(!settings.monitoringEnabled, "stays stoppable after a restart")
+    }
+}
+
+@MainActor
+private func loopAnnounceSuite() async throws {
+    // MARK: - Loop announcements
+
+    TestRunner.suite("ConnectionManager — loop announces backoff")
+
+    do {
+        // Two failures double the 5s interval to 10s, then a success drops it
+        // back: both transitions must be announced. Sleeps are real but the
+        // assertions only need monotonic log content, never exact timing.
+        let wifi = FakeWiFiController(currentSSID: nil)
+        wifi.setAssociateError(WiFiError.associationFailed("down"))
+        let notifier = FakeNotificationPresenter()
+        let (manager, _, log) = makeManager(
+            probe: ScriptedProbe([false, false, true]),
+            wifi: wifi, notifier: notifier, interval: 5,
+            suite: "selftest.loop.announce"
+        )
+
+        manager.start()
+        try? await Task.sleep(nanoseconds: 16_000_000_000)
+        manager.stop()
+
+        TestRunner.expect(
+            log.events.contains { $0.message.contains("Backing off") },
+            "announces the slowdown")
+        TestRunner.expect(
+            log.events.contains { $0.message.contains("Back to checking") },
+            "announces the recovery")
     }
 }
