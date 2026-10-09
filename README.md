@@ -78,12 +78,15 @@ Keychain і `SMAppService` ідентифікують застосунок са�
 swift run hotspotguard-selftest
 ```
 
-192 перевірки: `AppSettings` (включно з міграцією зі старого формату),
-`EventLog`, `KeychainHelper`, `CredentialsStore`, `TCPConnectivityProbe` і
-`ConnectionManager` — успішний реконект, captive portal, серія невдач із однією
-нотифікацією, відсутній пароль, start/stop, захист від паралельних спроб,
-backoff, реакція на зміну мережевого шляху, сон/пробудження, вимір затримки та
-перебір мереж за пріоритетом.
+330+ перевірок: `AppSettings` (включно з міграцією зі старого формату),
+`EventLog`, `KeychainHelper` (включно з in-memory mock для машин без Keychain),
+`CredentialsStore`, `TCPConnectivityProbe` і `ConnectionManager` — успішний
+реконект, captive portal, серія невдач із однією нотифікацією, відсутній
+пароль, start/stop, захист від паралельних спроб, backoff, реакція на зміну
+мережевого шляху, сон/пробудження, вимір затримки та перебір мереж за
+пріоритетом, — а також `LocationAuthorization`, `UserNotificationPresenter`,
+`WiFiController`, спостерігач мережевого шляху й `AnalyticsStore`/`AnalyticsExport`
+(аптайм, відвали, перцентилі, персистентність, формати експорту).
 
 Сьют розкладено по файлах за тестованим типом: `AppSettingsTests.swift`,
 `KeychainHelperTests.swift`, `ConnectionManagerTests.swift` тощо. Новий сьют —
@@ -170,7 +173,7 @@ defaults write com.yaroslavkv.hotspotguard flags.captivePortalDetection -bool fa
 
 GitHub Actions (`.github/workflows/ci.yml`) проганяє на macOS-раннері ті самі
 скрипти, що й локально: перевірку формату, SwiftLint, jscpd, перевірку
-тестового лейауту, Periphery і всі 192 перевірки. Дві паралельні задачі
+тестового лейауту, Periphery і всі 330+ перевірок. Дві паралельні задачі
 (`quality` і `test`), кожна помітно швидша за десять хвилин.
 
 Збірка кешується між прогонами (`actions/cache` на `.build`, інкрементальні
@@ -180,7 +183,7 @@ GitHub Actions (`.github/workflows/ci.yml`) проганяє на macOS-ранн
 ### Покриття
 
 `./scripts/coverage.sh` збирає selftest з LLVM-інструментацією
-(`-profile-generate`, XCTest не потрібен), проганяє всі 192 перевірки й міряє
+(`-profile-generate`, XCTest не потрібен), проганяє всі 330+ перевірок й міряє
 рядкове покриття `HotspotGuardCore` через `llvm-cov`. Ворота — 60% (заміряно
 68.6% на момент запровадження; запас лишено під headless-CI, де Keychain-сьюти
 пропускаються). Падає нижче порогу — падає CI.
@@ -446,7 +449,9 @@ TCP-хендшейк до зовнішнього хоста — сильніши
 5. **Start** — запустити моніторинг. Стан зберігається між запусками.
 
 **Reconnect now** — ручний тригер; неактивний, поки триває чергова перевірка.
-**History…** — усі 20 останніх подій.
+**History…** — усі 20 останніх подій, а зверху — аналітика: аптайм за добу,
+відвали за тиждень із сумарним даунтаймом, латентність p50/p95, розріз по
+мережах, плюс експорт історії у CSV/JSON.
 
 ### Кілька мереж і пріоритет
 

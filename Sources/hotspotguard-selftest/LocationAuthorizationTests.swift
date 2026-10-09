@@ -100,13 +100,17 @@ func runLocationAuthorizationTests() async throws {
 
         // The delegate method reports whatever the system manager says — the
         // contract here is only that the observer fires, not which value a
-        // given machine happens to hold.
+        // given machine happens to hold. Poll with a deadline instead of a
+        // fixed sleep so a loaded machine cannot flake this.
         var fired = false
         auth.request { _ in
             fired = true
         }
         auth.locationManagerDidChangeAuthorization(CLLocationManager())
-        try? await Task.sleep(nanoseconds: 20_000_000)
+        let deadline = Date().addingTimeInterval(5)
+        while !fired, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
 
         TestRunner.expect(fired, "the change callback reaches the observer")
     }

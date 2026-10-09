@@ -408,7 +408,10 @@ private func analyticsExportSuite() async throws {
 
         guard
             let text = AnalyticsExport.json(
-                samples: samples, outages: [closed, ongoing], uptimeFraction: 0.75)
+                samples: samples, outages: [closed, ongoing], uptimeFraction: 0.75,
+                samplesSince: base.addingTimeInterval(-1_000),
+                outagesSince: base.addingTimeInterval(-500),
+                uptimeSince: base.addingTimeInterval(-100))
         else {
             TestRunner.expect(false, "json export encodes")
             return
@@ -427,6 +430,10 @@ private func analyticsExportSuite() async throws {
         TestRunner.expectEqual(outages?.first?["ongoing"] as? Bool, false, "a closed outage is not ongoing")
         TestRunner.expectEqual(outages?.last?["ongoing"] as? Bool, true, "an ongoing outage says so")
         TestRunner.expect(outages?.last?["end"] == nil, "an ongoing outage has a null end")
+        TestRunner.expect(
+            decoded["samplesSince"] is Double && decoded["outagesSince"] is Double
+                && decoded["uptimeSince"] is Double,
+            "json labels each section with its window")
     }
 }
 

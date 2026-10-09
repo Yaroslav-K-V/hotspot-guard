@@ -87,12 +87,16 @@ private struct AnalyticsSection: View {
 
     private func exportJSON() {
         let now = Date()
-        let outages = analytics.outages(since: now.addingTimeInterval(-.week(7)))
+        let weekAgo = now.addingTimeInterval(-.week(7))
+        let dayAgo = now.addingTimeInterval(-.day(1))
         let text =
             AnalyticsExport.json(
                 samples: analytics.samples,
-                outages: outages,
-                uptimeFraction: analytics.uptimeFraction(since: now.addingTimeInterval(-.day(1)))
+                outages: analytics.outages(since: weekAgo),
+                uptimeFraction: analytics.uptimeFraction(since: dayAgo),
+                samplesSince: analytics.samples.map(\.timestamp).min(),
+                outagesSince: weekAgo,
+                uptimeSince: dayAgo
             ) ?? "[]"
         save(text: text, filename: "hotspotguard-analytics.json", type: .json)
     }

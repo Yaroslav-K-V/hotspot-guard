@@ -128,16 +128,20 @@ One row per sample: timestamp, status, latency, network.
 
 Loads straight into a spreadsheet.
 
-### `json(samples:outages:uptimeFraction:generatedAt:)`
+### `json(samples:outages:uptimeFraction:samplesSince:outagesSince:uptimeSince:generatedAt:)`
 
 _type.method_
 
 ```swift
-static func json(samples: [AnalyticSample], outages: [Outage], uptimeFraction: Double?, generatedAt: Date = Date()) -> String?
+static func json(samples: [AnalyticSample], outages: [Outage], uptimeFraction: Double?, samplesSince: Date? = nil, outagesSince: Date? = nil, uptimeSince: Date? = nil, generatedAt: Date = Date()) -> String?
 ```
 
 Machine-readable dump: summary counters plus the full sample and
 outage lists.
+
+Each section carries the window it was computed over — samples may
+span the whole retention while outages and uptime cover shorter
+windows, and a consumer must not mistake one for the other.
 
 Returns `nil` only when encoding fails, which a JSON
 encoder over these types effectively never does.

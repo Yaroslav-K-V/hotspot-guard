@@ -274,8 +274,9 @@ private func loopAnnounceSuite() async throws {
 
     do {
         // Two failures double the 5s interval to 10s, then a success drops it
-        // back: both transitions must be announced. Sleeps are real but the
-        // assertions only need monotonic log content, never exact timing.
+        // back: both transitions must be announced. Poll the log with a
+        // deadline instead of sleeping a fixed span, so a slow machine waits
+        // longer rather than failing.
         let wifi = FakeWiFiController(currentSSID: nil)
         wifi.setAssociateError(WiFiError.associationFailed("down"))
         let notifier = FakeNotificationPresenter()
@@ -286,7 +287,14 @@ private func loopAnnounceSuite() async throws {
         )
 
         manager.start()
-        try? await Task.sleep(nanoseconds: 16_000_000_000)
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            let messages = log.events.map(\.message).joined()
+            if messages.contains("Backing off") && messages.contains("Back to checking") {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
         manager.stop()
 
         TestRunner.expect(

@@ -31,16 +31,26 @@ public enum AnalyticsExport {
     /// Machine-readable dump: summary counters plus the full sample and
     /// outage lists.
     ///
+    /// Each section carries the window it was computed over — samples may
+    /// span the whole retention while outages and uptime cover shorter
+    /// windows, and a consumer must not mistake one for the other.
+    ///
     /// Returns `nil` only when encoding fails, which a JSON
     /// encoder over these types effectively never does.
     public static func json(
         samples: [AnalyticSample],
         outages: [Outage],
         uptimeFraction: Double?,
+        samplesSince: Date? = nil,
+        outagesSince: Date? = nil,
+        uptimeSince: Date? = nil,
         generatedAt: Date = Date()
     ) -> String? {
         struct Payload: Encodable {
             var generatedAt: Date
+            var samplesSince: Date?
+            var outagesSince: Date?
+            var uptimeSince: Date?
             var uptimeFraction: Double?
             var samples: [AnalyticSample]
             var outages: [OutagePayload]
@@ -53,6 +63,9 @@ public enum AnalyticsExport {
         }
         let payload = Payload(
             generatedAt: generatedAt,
+            samplesSince: samplesSince,
+            outagesSince: outagesSince,
+            uptimeSince: uptimeSince,
             uptimeFraction: uptimeFraction,
             samples: samples.sorted(by: { $0.timestamp < $1.timestamp }),
             outages: outages.map {
