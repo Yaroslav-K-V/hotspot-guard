@@ -49,6 +49,8 @@ final class AppModel {
         flags: FeatureFlags,
         analytics: AnalyticsStore,
         location: LocationAuthorization,
+        wifi: WiFiController = CoreWLANController(),
+        notifier: NotificationPresenter = UserNotificationPresenter(),
         kickBootstrap: Bool
     ) {
         self.settings = settings
@@ -66,6 +68,8 @@ final class AppModel {
             probe: TCPConnectivityProbe(
                 portalDetector: flags.isEnabled(.captivePortalDetection) ? AppleCaptivePortalDetector() : nil
             ),
+            wifi: wifi,
+            notifier: notifier,
             // AppKit lives here, not in Core — this is the whole reason
             // SleepWakeObserver is a protocol.
             sleepObserver: WorkspaceSleepWakeObserver(),
@@ -229,6 +233,7 @@ struct HotspotGuardApp: App {
                 guard let shotDefaults = UserDefaults(suiteName: "shots") else {
                     fatalError("Shot mode needs a scratch UserDefaults suite")
                 }
+                shotDefaults.removePersistentDomain(forName: "shots")
                 let shot = AppModel(
                     settings: AppSettings(defaults: shotDefaults),
                     log: EventLog(),
@@ -236,6 +241,8 @@ struct HotspotGuardApp: App {
                     flags: FeatureFlags(),
                     analytics: AnalyticsStore(directory: directory.appendingPathComponent("analytics")),
                     location: LocationAuthorization(),
+                    wifi: DemoWiFiController(),
+                    notifier: SilentNotifier(),
                     kickBootstrap: false
                 )
                 _model = State(initialValue: shot)
