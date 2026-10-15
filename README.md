@@ -192,17 +192,11 @@ GitHub Actions (`.github/workflows/ci.yml`) проганяє на macOS-ранн
 68.6% на момент запровадження; запас лишено під headless-CI, де Keychain-сьюти
 пропускаються). Падає нижче порогу — падає CI.
 
-Кожен PR автоматично рев'юїть Droid (`.github/workflows/droid-review.yml`,
-deep-прохід). Одноразова підготовка: встановити GitHub App
-([app.factory.ai](https://app.factory.ai/settings/integrations/github/start))
-і додати секрет `FACTORY_API_KEY`
-([ключі](https://app.factory.ai/settings/api-keys)).
-
 ### Релізи
 
 Реліз — одна команда: `./scripts/release.sh 1.1.0`. Скрипт перевіряє, що
 дерево чисте і `main` синхронізований з origin, проганяє повний локальний
-гейт (формат, лінт, копіпаста, лейаут, Periphery, збірка, 199 перевірок),
+гейт (формат, лінт, копіпаста, лейаут, Periphery, збірка, 330+ перевірок),
 підіймає версію в `Resources/Info.plist`, комітить, ставить анотований тег і
 пушить. Тег запускає `.github/workflows/release.yml`: він звіряє версію тега
 з Info.plist, збирає `.app`, пакує його в zip і створює GitHub Release з

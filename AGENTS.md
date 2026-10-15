@@ -92,5 +92,4 @@ its exit code — don't.
 
 `.github/workflows/ci.yml` (two parallel macOS jobs running these same
 scripts), `release.yml` (tag-driven GitHub Release with generated notes),
-`nightly.yml` (rolling prerelease when main moved), `droid-review.yml`
-(automated PR review; needs the GitHub App + `FACTORY_API_KEY` secret).
+`nightly.yml` (rolling prerelease when main moved).
