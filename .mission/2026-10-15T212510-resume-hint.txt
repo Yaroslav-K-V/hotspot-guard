@@ -1,0 +1,5 @@
+runId: in-session (no Workflow runner in this environment; executed directly with the same discipline)
+manifest: .mission/2026-10-15T212510-manifest.json
+brief: .mission/2026-10-15T212510-brief.md
+branch: feature/demo-gif
+report: .mission/2026-10-15T212510-report.md (written at handback)

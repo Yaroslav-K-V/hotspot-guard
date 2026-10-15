@@ -41,6 +41,7 @@ swift run hotspotguard-selftest        # 330+ checks; exits non-zero on failure
 ./scripts/build-app.sh                 # build + wrap + sign .app bundle
 ./scripts/release.sh 1.2.3             # gated version bump, tag, push
 ./scripts/generate-api-docs.sh [--check]  # regenerate docs/api/, or verify freshness
+./scripts/make-demo-gif.sh [shots] [out]  # assemble README demo GIF from --shot-dir frames
 ./scripts/check-agents-md.sh           # this file must not lie
 ./scripts/clean-keychain.sh            # wipe dev Keychain entries (ad-hoc signing)
 ./scripts/sync-labels.sh [--check]     # sync .github/labels.json to repo labels

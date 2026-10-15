@@ -3,13 +3,37 @@
     import HotspotGuardCore
     import SwiftUI
 
+    /// Shot-only Wi-Fi stand-in: reports a fixed neutral SSID so renders never
+    /// leak the machine's real network name into README assets.
+    ///
+    /// Association is deliberately unavailable — shots only observe.
+    final class DemoWiFiController: WiFiController, @unchecked Sendable {
+        static let ssid = "Home Wi-Fi"
+
+        func currentSSID() async -> String? { Self.ssid }
+        func isPoweredOn() async -> Bool { true }
+        func associate(ssid: String, password: String) async throws {
+            throw WiFiError.associationFailed("demo mode never associates")
+        }
+    }
+
+    /// Shot-only notification sink: drops everything so an offline render
+    /// can never banner the developer's Notification Center.
+    final class SilentNotifier: NotificationPresenter, @unchecked Sendable {
+        func requestAuthorization() async {}
+        func present(title: String, body: String) async {}
+    }
+
     /// Renders README demo frames offscreen: `HotspotGuard --shot-dir /tmp/shots`.
     ///
     /// Debug-only dev tool (compiled out of release builds): builds an isolated
-    /// `AppModel` (temporary UserDefaults suite, temporary analytics directory,
-    /// no bootstrap so no permission prompts and no real state touched), drives
-    /// live ticks for the menu frames, seeds a synthetic week for the History
-    /// frame, and writes PNGs. Assemble with ffmpeg into `docs/demo-menu.gif`.
+    /// `AppModel` (scratch UserDefaults suite, scratch analytics directory,
+    /// demo Wi-Fi with a neutral SSID, silent notifications, no bootstrap so
+    /// no permission prompts and no real state touched), drives live ticks
+    /// for the menu frames, seeds a synthetic week for the History frame,
+    /// and writes PNGs. Frames reflect connectivity at render time — render
+    /// online for the healthy state. Assemble with
+    /// `./scripts/make-demo-gif.sh`.
     enum ShotRunner {
         /// Present only when launched as `HotspotGuard --shot-dir <path>`.
         static var outputDirectory: URL? {
@@ -26,10 +50,13 @@
 
             model.settings.networks = [HotspotNetwork(ssid: "My iPhone")]
             model.suppressBootstrap = true
+            // Deterministic re-runs: a reused shot directory must not accumulate
+            // another synthetic week on top of the previous one.
+            model.analytics.reset()
             seedWeek(into: model.analytics)
 
             // Live ticks grow the latency graph frame by frame.
-            for frame in 0..<8 {
+            for frame in 0..<14 {
                 await model.manager.tick()
                 render(
                     MenuBarView(model: model).frame(width: 380, alignment: .top),
