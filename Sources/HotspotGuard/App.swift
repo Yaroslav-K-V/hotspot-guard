@@ -25,20 +25,39 @@ final class AppModel {
     /// name is missing.
     private(set) var isLocationAuthorized: Bool = false
 
-    init() {
-        let settings = AppSettings()
-        let log = EventLog()
-        let credentials = CredentialsStore()
-        let flags = FeatureFlags()
-        let analytics = AnalyticsStore()
+    convenience init() {
+        self.init(
+            settings: AppSettings(),
+            log: EventLog(),
+            credentials: CredentialsStore(),
+            flags: FeatureFlags(),
+            analytics: AnalyticsStore(),
+            location: LocationAuthorization(),
+            kickBootstrap: true
+        )
+    }
 
+    /// Full injection, for previews, shots and tests.
+    ///
+    /// Production uses plain `init()`. `kickBootstrap` decides whether launch
+    /// work (permissions, monitoring resume) starts — shots pass `false` so a
+    /// render run never prompts and never touches real state.
+    init(
+        settings: AppSettings,
+        log: EventLog,
+        credentials: CredentialsStore,
+        flags: FeatureFlags,
+        analytics: AnalyticsStore,
+        location: LocationAuthorization,
+        kickBootstrap: Bool
+    ) {
         self.settings = settings
         self.log = log
         self.credentials = credentials
         self.flags = flags
         self.analytics = analytics
         self.launchAtLogin = LaunchAtLoginController()
-        self.location = LocationAuthorization()
+        self.location = location
         self.manager = ConnectionManager(
             settings: settings,
             log: log,
@@ -60,18 +79,28 @@ final class AppModel {
         // not run until then. Resuming monitoring after a restart, requesting
         // permissions and repairing Keychain keys all have to happen at launch,
         // whether or not anyone opens the menu.
-        Task { @MainActor [weak self] in
-            await self?.bootstrap()
+        if kickBootstrap {
+            Task { @MainActor [weak self] in
+                await self?.bootstrap()
+            }
         }
     }
 
     @ObservationIgnored private var hasBootstrapped = false
+
+    /// Test/shot seam.
+    ///
+    /// When `true`, ``bootstrap()`` is a no-op — shots render views whose
+    /// `.task` would otherwise kick bootstrap (permission prompts, real
+    /// Keychain sweep) as a side effect of rendering.
+    var suppressBootstrap = false
 
     /// One-time startup work.
     ///
     /// Guarded because it is kicked off from `init` *and* from the menu's
     /// `.task`, and whichever runs first wins.
     func bootstrap() async {
+        guard !suppressBootstrap else { return }
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
         await performBootstrap()
@@ -192,7 +221,33 @@ final class AppModel {
 
 @main
 struct HotspotGuardApp: App {
-    @State private var model = AppModel()
+    @State private var model: AppModel
+
+    init() {
+        #if DEBUG
+            if let directory = ShotRunner.outputDirectory {
+                guard let shotDefaults = UserDefaults(suiteName: "shots") else {
+                    fatalError("Shot mode needs a scratch UserDefaults suite")
+                }
+                let shot = AppModel(
+                    settings: AppSettings(defaults: shotDefaults),
+                    log: EventLog(),
+                    credentials: CredentialsStore(),
+                    flags: FeatureFlags(),
+                    analytics: AnalyticsStore(directory: directory.appendingPathComponent("analytics")),
+                    location: LocationAuthorization(),
+                    kickBootstrap: false
+                )
+                _model = State(initialValue: shot)
+                Task { @MainActor in
+                    await ShotRunner.run(model: shot, into: directory)
+                    Foundation.exit(0)
+                }
+                return
+            }
+        #endif
+        _model = State(initialValue: AppModel())
+    }
 
     var body: some Scene {
         MenuBarExtra {

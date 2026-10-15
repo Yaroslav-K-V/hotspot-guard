@@ -8,6 +8,14 @@ The menu bar icon shows the status: **green** — internet is available, **yello
 
 *Меню HotspotGuard: статус зʼєднання, список мереж у порядку спроб, графік затримки та останні події.*
 
+<img src="docs/demo-menu.gif" width="350" alt="Анімація: графік затримки росте з кожною перевіркою">
+
+*Наживо: графік затримки росте з кожною перевіркою, оновлюються медіана, час останньої перевірки та події.*
+
+<img src="docs/demo-history.png" width="460" alt="Вікно History: аналітика аптайму, відвалів і латентності та кнопки експорту">
+
+*Вікно History: аналітика за тиждень (аптайм, відвали, p50/p95, розріз по мережах) та експорт у CSV/JSON. Аналітика зберігається між запусками, події — лише за сесію.*
+
 > [!IMPORTANT]
 > **Does not work with a sleeping iPhone hotspot**, and this cannot be fixed by code.
 > When the last client disconnects, iOS turns off the phone's Wi-Fi radio; it remains visible in the Mac menu, but via Bluetooth (Instant Hotspot), not on the air.
