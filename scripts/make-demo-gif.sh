@@ -41,12 +41,15 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Cursor waypoints in frame pixels (760-wide frames): the + button, the
 # network row, the interval slider, the History link, Stop — then home.
-# Positions interpolate linearly between waypoints across the frames.
-python3 - "$SHOTS" "$WORK" <<'PY'
+# The cursor glides across the OUTPUT frames while backgrounds crossfade
+# between rendered frames, so motion stays smooth at 12fps.
+FPS=12
+BLENDS=4
+python3 - "$SHOTS" "$WORK" "$FPS" "$BLENDS" <<'PY'
 import glob
 import sys
 from PIL import Image, ImageDraw
-shots_dir, work = sys.argv[1], sys.argv[2]
+shots_dir, work, fps, blends = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 files = sorted(glob.glob(f"{shots_dir}/menu-*.png"))
 ims = [Image.open(f).convert("RGBA") for f in files]
 width = max(i.width for i in ims)
@@ -63,9 +66,9 @@ waypoints = [
 ]
 
 
-def cursor_at(frame: int, total: int) -> tuple[int, int]:
-    span = (total - 1) / (len(waypoints) - 1)
-    position = min(frame / span, len(waypoints) - 1)
+def cursor_at(out_frame: int, out_total: int) -> tuple[int, int]:
+    span = (out_total - 1) / (len(waypoints) - 1)
+    position = min(out_frame / span, len(waypoints) - 1)
     leg = min(int(position), len(waypoints) - 2)
     blend = position - leg
     (x0, y0), (x1, y1) = waypoints[leg], waypoints[leg + 1]
@@ -88,16 +91,28 @@ def draw_cursor(canvas: Image.Image, tip: tuple[int, int]) -> None:
 
 corner = Image.new("L", (width, height), 0)
 ImageDraw.Draw(corner).rounded_rectangle([0, 0, width - 1, height - 1], radius=26, fill=255)
-for i, im in enumerate(ims):
+padded = []
+for im in ims:
     canvas = Image.new("RGBA", (width, height), bg + (255,))
     canvas.alpha_composite(im, (0, 0))
-    draw_cursor(canvas, cursor_at(i, len(ims)))
-    canvas.putalpha(corner)
-    canvas.save(f"{work}/frame-{i:02d}.png")
-print(f"composed {len(ims)} frames at {width}x{height}")
+    padded.append(canvas)
+out = 0
+for gap in range(len(padded) - 1):
+    for step in range(blends):
+        alpha = step / blends
+        frame = Image.blend(padded[gap], padded[gap + 1], alpha)
+        draw_cursor(frame, cursor_at(out, (len(padded) - 1) * blends + 1))
+        frame.putalpha(corner)
+        frame.save(f"{work}/frame-{out:02d}.png")
+        out += 1
+frame = padded[-1].copy()
+draw_cursor(frame, cursor_at(out, out + 1))
+frame.putalpha(corner)
+frame.save(f"{work}/frame-{out:02d}.png")
+print(f"composed {out + 1} frames at {width}x{height}")
 PY
 
-ffmpeg -y -v error -start_number 0 -framerate 2 -i "$WORK/frame-%02d.png" \
+ffmpeg -y -v error -start_number 0 -framerate "$FPS" -i "$WORK/frame-%02d.png" \
     -vf "split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4" \
     "$OUT"
 echo "Wrote $OUT ($(du -h "$OUT" | cut -f1))"
