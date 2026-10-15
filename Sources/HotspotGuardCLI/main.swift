@@ -22,9 +22,11 @@ func main() async {
         probeTimeout: Defaults.probeTimeout,
         postAssociationDelay: Defaults.postAssociationDelay,
         passwordProvider: { ssid in
-            if ProcessInfo.processInfo.environment["HOTSPOTGUARD_DEV_MOCK_KEYCHAIN"] == "1" {
-                return "mock_password"
-            }
+            #if DEBUG
+                if ProcessInfo.processInfo.environment["HOTSPOTGUARD_DEV_MOCK_KEYCHAIN"] == "1" {
+                    return "mock_password"
+                }
+            #endif
             return try? KeychainHelper.password(account: ssid)
         }
     )

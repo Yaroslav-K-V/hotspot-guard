@@ -4,6 +4,10 @@ macOS menu bar watchdog: monitors internet connection and automatically reconnec
 
 The menu bar icon shows the status: **green** — internet is available, **yellow** — reconnection attempt in progress, **red** — connection lost, **gray** — monitoring disabled.
 
+<img src="docs/screenshot-menu.png" width="350" alt="Меню HotspotGuard: статус зʼєднання, список мереж, графік латентності">
+
+*Меню HotspotGuard: статус зʼєднання, список мереж у порядку спроб, графік затримки та останні події.*
+
 > [!IMPORTANT]
 > **Does not work with a sleeping iPhone hotspot**, and this cannot be fixed by code.
 > When the last client disconnects, iOS turns off the phone's Wi-Fi radio; it remains visible in the Mac menu, but via Bluetooth (Instant Hotspot), not on the air.

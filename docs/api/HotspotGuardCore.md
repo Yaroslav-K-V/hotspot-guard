@@ -2,6 +2,288 @@
 
 Generated from the compiler's symbol graph by `scripts/generate-api-docs.sh`. Do not edit by hand; CI regenerates this file and fails the build when it drifts from the code.
 
+## `AnalyticSample`
+
+_struct_
+
+```swift
+struct AnalyticSample
+```
+
+One connectivity observation, as recorded by ``AnalyticsStore``.
+
+Passwords are never part of a sample — the SSID alone identifies the
+network, mirroring the ``EventLog`` rule that entries must be safe to
+screenshot.
+
+**Members:**
+
+### `!=(_:_:)`
+
+_func.op_
+
+```swift
+static func != (lhs: Self, rhs: Self) -> Bool
+```
+
+Returns a Boolean value indicating whether two values are not equal.
+
+Inequality is the inverse of equality. For any values `a` and `b`, `a != b`
+implies that `a == b` is `false`.
+
+This is the default implementation of the not-equal-to operator (`!=`)
+for any type that conforms to `Equatable`.
+
+- Parameters:
+  - lhs: A value to compare.
+  - rhs: Another value to compare.
+
+### `init(from:)`
+
+_initializer_
+
+```swift
+init(from decoder: any Decoder) throws
+```
+
+### `init(timestamp:status:latencyMilliseconds:ssid:)`
+
+_initializer_
+
+```swift
+init(timestamp: Date = Date(), status: ConnectivityResult.Status, latencyMilliseconds: Int? = nil, ssid: String? = nil)
+```
+
+### `isOnline`
+
+_property_
+
+```swift
+var isOnline: Bool { get }
+```
+
+Whether this sample counts toward uptime.
+
+`true` for a genuinely usable connection. Mirrors
+``ConnectivityResult/isReachable``: a captive portal is traffic that
+goes nowhere, so it counts as neither uptime nor outage.
+
+### `latencyMilliseconds`
+
+_property_
+
+```swift
+let latencyMilliseconds: Int?
+```
+
+### `ssid`
+
+_property_
+
+```swift
+let ssid: String?
+```
+
+### `status`
+
+_property_
+
+```swift
+let status: ConnectivityResult.Status
+```
+
+### `timestamp`
+
+_property_
+
+```swift
+let timestamp: Date
+```
+
+
+## `AnalyticsExport`
+
+_enum_
+
+```swift
+enum AnalyticsExport
+```
+
+Renders analytics history for export.
+
+Pure functions over already-loaded samples and outages — the file dialog
+in the UI stays a thin shell.
+
+**Members:**
+
+### `csv(samples:)`
+
+_type.method_
+
+```swift
+static func csv(samples: [AnalyticSample]) -> String
+```
+
+One row per sample: timestamp, status, latency, network.
+
+Loads straight into a spreadsheet.
+
+### `json(samples:outages:uptimeFraction:samplesSince:outagesSince:uptimeSince:generatedAt:)`
+
+_type.method_
+
+```swift
+static func json(samples: [AnalyticSample], outages: [Outage], uptimeFraction: Double?, samplesSince: Date? = nil, outagesSince: Date? = nil, uptimeSince: Date? = nil, generatedAt: Date = Date()) -> String?
+```
+
+Machine-readable dump: summary counters plus the full sample and
+outage lists.
+
+Each section carries the window it was computed over — samples may
+span the whole retention while outages and uptime cover shorter
+windows, and a consumer must not mistake one for the other.
+
+Returns `nil` only when encoding fails, which a JSON
+encoder over these types effectively never does.
+
+
+## `AnalyticsRecorder`
+
+_protocol_
+
+```swift
+protocol AnalyticsRecorder
+```
+
+Receives analytics observations. ``AnalyticsStore`` is the real one;
+tests substitute a spy.
+
+
+## `AnalyticsStore`
+
+_class_
+
+```swift
+@MainActor final class AnalyticsStore
+```
+
+Persistent connection history: samples, attempts, and the queries that
+turn them into uptime, outage, latency and per-network statistics.
+
+Everything stays on this machine — a JSON snapshot next to the app's
+other data, loaded at launch and rewritten on every record. Ticks arrive
+no faster than every few seconds, so a small file write per record is
+cheaper than batching complexity.
+
+**Members:**
+
+### `init(directory:)`
+
+_initializer_
+
+```swift
+@MainActor init(directory: URL? = nil)
+```
+
+- Parameter directory: where `analytics.json` lives. `nil` resolves to
+  the app's Application Support directory; when that is unavailable
+  too, the store keeps everything in memory.
+
+### `latencySummary(since:)`
+
+_method_
+
+```swift
+@MainActor func latencySummary(since: Date) -> LatencySummary?
+```
+
+Latency distribution over online samples in the window, or `nil` when
+none of them carried a latency.
+
+### `outages(since:)`
+
+_method_
+
+```swift
+@MainActor func outages(since: Date) -> [Outage]
+```
+
+Maximal runs of `.offline` samples inside the window, oldest first.
+
+A run reaching the newest sample is ongoing (`end == nil`).
+
+### `perNetwork(since:)`
+
+_method_
+
+```swift
+@MainActor func perNetwork(since: Date) -> [NetworkStats]
+```
+
+One row per SSID seen in the window, ordered by check count.
+
+### `record(attempt:)`
+
+_method_
+
+```swift
+@MainActor func record(attempt: NetworkAttempt)
+```
+
+### `record(sample:)`
+
+_method_
+
+```swift
+@MainActor func record(sample: AnalyticSample)
+```
+
+### `reset()`
+
+_method_
+
+```swift
+@MainActor func reset()
+```
+
+Drops everything ever recorded, in memory and on disk.
+
+### `uptimeFraction(since:)`
+
+_method_
+
+```swift
+@MainActor func uptimeFraction(since: Date) -> Double?
+```
+
+Fraction of usable time in the window, or `nil` when the window holds
+no decisive samples.
+
+Captive-portal samples are excluded from both sides: the radio works
+and the user has a clear action, so a portal is neither uptime (traffic
+goes nowhere) nor outage (reconnecting would make it worse).
+
+### `attempts`
+
+_property_
+
+```swift
+@MainActor var attempts: [NetworkAttempt] { get set }
+```
+
+### `samples`
+
+_property_
+
+```swift
+@MainActor var samples: [AnalyticSample] { get set }
+```
+
+All recorded samples, oldest first.
+
+Trimmed by ``Defaults`` caps.
+
+
 ## `AppSettings`
 
 _class_
@@ -157,12 +439,12 @@ _enum_
 enum State
 ```
 
-### `init(settings:log:probe:wifi:notifier:pathObserver:sleepObserver:probeTimeout:postAssociationDelay:passwordProvider:)`
+### `init(settings:log:probe:wifi:notifier:pathObserver:sleepObserver:probeTimeout:postAssociationDelay:passwordProvider:analytics:)`
 
 _initializer_
 
 ```swift
-@MainActor init(settings: AppSettings, log: EventLog, probe: ConnectivityProbe = TCPConnectivityProbe(), wifi: WiFiController = CoreWLANController(), notifier: NotificationPresenter = UserNotificationPresenter(), pathObserver: NetworkPathObserver? = SystemNetworkPathObserver(), sleepObserver: SleepWakeObserver? = nil, probeTimeout: TimeInterval = Defaults.probeTimeout, postAssociationDelay: Duration = Defaults.postAssociationDelay, passwordProvider: @escaping @MainActor (String) -> String?)
+@MainActor init(settings: AppSettings, log: EventLog, probe: ConnectivityProbe = TCPConnectivityProbe(), wifi: WiFiController = CoreWLANController(), notifier: NotificationPresenter = UserNotificationPresenter(), pathObserver: NetworkPathObserver? = SystemNetworkPathObserver(), sleepObserver: SleepWakeObserver? = nil, probeTimeout: TimeInterval = Defaults.probeTimeout, postAssociationDelay: Duration = Defaults.postAssociationDelay, passwordProvider: @escaping @MainActor (String) -> String?, analytics: (any AnalyticsRecorder)? = nil)
 ```
 
 ### `handlePathChange(isSatisfied:)`
@@ -839,6 +1121,40 @@ caller, so putting them here keeps the defaults usable everywhere.
 
 **Members:**
 
+### `analyticsAttemptCap`
+
+_type.property_
+
+```swift
+static let analyticsAttemptCap: Int
+```
+
+How many reconnect attempts the analytics store keeps.
+
+### `analyticsRetentionDays`
+
+_type.property_
+
+```swift
+static let analyticsRetentionDays: Int
+```
+
+Samples and attempts older than this are dropped on record and load.
+
+### `analyticsSampleCap`
+
+_type.property_
+
+```swift
+static let analyticsSampleCap: Int
+```
+
+How many samples the analytics store keeps.
+
+At a 10s check interval
+this is roughly two weeks of history; older entries are pruned first
+by age (see below), so the cap only binds for sub-minute intervals.
+
 ### `checkInterval`
 
 _type.property_
@@ -1511,6 +1827,79 @@ func setPassword(_ password: String, for account: String) throws
 ```
 
 
+## `LatencySummary`
+
+_struct_
+
+```swift
+struct LatencySummary
+```
+
+Latency distribution over a window, in milliseconds.
+
+**Members:**
+
+### `!=(_:_:)`
+
+_func.op_
+
+```swift
+static func != (lhs: Self, rhs: Self) -> Bool
+```
+
+Returns a Boolean value indicating whether two values are not equal.
+
+Inequality is the inverse of equality. For any values `a` and `b`, `a != b`
+implies that `a == b` is `false`.
+
+This is the default implementation of the not-equal-to operator (`!=`)
+for any type that conforms to `Equatable`.
+
+- Parameters:
+  - lhs: A value to compare.
+  - rhs: Another value to compare.
+
+### `init(count:median:p95:max:)`
+
+_initializer_
+
+```swift
+init(count: Int, median: Int, p95: Int, max: Int)
+```
+
+### `count`
+
+_property_
+
+```swift
+let count: Int
+```
+
+### `max`
+
+_property_
+
+```swift
+let max: Int
+```
+
+### `median`
+
+_property_
+
+```swift
+let median: Int
+```
+
+### `p95`
+
+_property_
+
+```swift
+let p95: Int
+```
+
+
 ## `LocationAuthorization`
 
 _class_
@@ -1693,6 +2082,95 @@ let timestamp: Date
 ```
 
 
+## `NetworkAttempt`
+
+_struct_
+
+```swift
+struct NetworkAttempt
+```
+
+One reconnect attempt against a single network.
+
+**Members:**
+
+### `Outcome`
+
+_enum_
+
+```swift
+enum Outcome
+```
+
+### `!=(_:_:)`
+
+_func.op_
+
+```swift
+static func != (lhs: Self, rhs: Self) -> Bool
+```
+
+Returns a Boolean value indicating whether two values are not equal.
+
+Inequality is the inverse of equality. For any values `a` and `b`, `a != b`
+implies that `a == b` is `false`.
+
+This is the default implementation of the not-equal-to operator (`!=`)
+for any type that conforms to `Equatable`.
+
+- Parameters:
+  - lhs: A value to compare.
+  - rhs: Another value to compare.
+
+### `init(from:)`
+
+_initializer_
+
+```swift
+init(from decoder: any Decoder) throws
+```
+
+### `init(ssid:outcome:timestamp:latencyMilliseconds:)`
+
+_initializer_
+
+```swift
+init(ssid: String, outcome: Outcome, timestamp: Date = Date(), latencyMilliseconds: Int? = nil)
+```
+
+### `latencyMilliseconds`
+
+_property_
+
+```swift
+let latencyMilliseconds: Int?
+```
+
+### `outcome`
+
+_property_
+
+```swift
+let outcome: Outcome
+```
+
+### `ssid`
+
+_property_
+
+```swift
+let ssid: String
+```
+
+### `timestamp`
+
+_property_
+
+```swift
+let timestamp: Date
+```
+
+
 ## `NetworkPathObserver`
 
 _protocol_
@@ -1709,6 +2187,95 @@ captive portal looks perfectly satisfied. So the path event is used as a
 trigger to check now, and the probe still decides the answer.
 
 
+## `NetworkStats`
+
+_struct_
+
+```swift
+struct NetworkStats
+```
+
+Aggregate counters for one network over a window.
+
+**Members:**
+
+### `!=(_:_:)`
+
+_func.op_
+
+```swift
+static func != (lhs: Self, rhs: Self) -> Bool
+```
+
+Returns a Boolean value indicating whether two values are not equal.
+
+Inequality is the inverse of equality. For any values `a` and `b`, `a != b`
+implies that `a == b` is `false`.
+
+This is the default implementation of the not-equal-to operator (`!=`)
+for any type that conforms to `Equatable`.
+
+- Parameters:
+  - lhs: A value to compare.
+  - rhs: Another value to compare.
+
+### `init(ssid:checks:onlineChecks:averageLatencyMilliseconds:attempts:successes:)`
+
+_initializer_
+
+```swift
+init(ssid: String, checks: Int, onlineChecks: Int, averageLatencyMilliseconds: Int?, attempts: Int, successes: Int)
+```
+
+### `attempts`
+
+_property_
+
+```swift
+let attempts: Int
+```
+
+### `averageLatencyMilliseconds`
+
+_property_
+
+```swift
+let averageLatencyMilliseconds: Int?
+```
+
+### `checks`
+
+_property_
+
+```swift
+let checks: Int
+```
+
+### `onlineChecks`
+
+_property_
+
+```swift
+let onlineChecks: Int
+```
+
+### `ssid`
+
+_property_
+
+```swift
+let ssid: String
+```
+
+### `successes`
+
+_property_
+
+```swift
+let successes: Int
+```
+
+
 ## `NotificationPresenter`
 
 _protocol_
@@ -1721,6 +2288,90 @@ Delivers user-visible alerts.
 
 Abstracted so tests can assert that a notification was raised without
 actually posting one.
+
+
+## `Outage`
+
+_struct_
+
+```swift
+struct Outage
+```
+
+A maximal run of `.offline` samples: the machine had no route.
+
+A captive portal interrupts an outage rather than extending it — the
+radio works and the user has a clear action, which is a different
+situation from "nothing answers". Portal samples are likewise excluded
+from ``AnalyticsStore/uptimeFraction(since:)``.
+
+**Members:**
+
+### `!=(_:_:)`
+
+_func.op_
+
+```swift
+static func != (lhs: Self, rhs: Self) -> Bool
+```
+
+Returns a Boolean value indicating whether two values are not equal.
+
+Inequality is the inverse of equality. For any values `a` and `b`, `a != b`
+implies that `a == b` is `false`.
+
+This is the default implementation of the not-equal-to operator (`!=`)
+for any type that conforms to `Equatable`.
+
+- Parameters:
+  - lhs: A value to compare.
+  - rhs: Another value to compare.
+
+### `init(start:end:sampleCount:)`
+
+_initializer_
+
+```swift
+init(start: Date, end: Date?, sampleCount: Int)
+```
+
+### `duration(now:)`
+
+_method_
+
+```swift
+func duration(now: Date = Date()) -> TimeInterval
+```
+
+Wall-clock downtime.
+
+Open-ended for an ongoing outage, measured to now.
+
+### `end`
+
+_property_
+
+```swift
+let end: Date?
+```
+
+`nil` while the outage is still going.
+
+### `sampleCount`
+
+_property_
+
+```swift
+let sampleCount: Int
+```
+
+### `start`
+
+_property_
+
+```swift
+let start: Date
+```
 
 
 ## `PasswordStorage`
@@ -2251,6 +2902,22 @@ _method_
 
 ```swift
 func present(title: String, body: String) async
+```
+
+### `record(attempt:)`
+
+_method_
+
+```swift
+func record(attempt: NetworkAttempt)
+```
+
+### `record(sample:)`
+
+_method_
+
+```swift
+func record(sample: AnalyticSample)
 ```
 
 ### `requestAuthorization()`

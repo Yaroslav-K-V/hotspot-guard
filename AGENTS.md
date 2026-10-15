@@ -30,7 +30,7 @@ external dependencies, builds with Command Line Tools (no Xcode required).
 ```bash
 swift build                            # builds all targets (do this — the
                                        # selftest alone never compiles the app)
-swift run hotspotguard-selftest        # 199 checks; exits non-zero on failure
+swift run hotspotguard-selftest        # 330+ checks; exits non-zero on failure
 ./scripts/format.sh [--check]          # swift-format, .swift-format config
 ./scripts/lint.sh                      # SwiftLint, .swiftlint.yml
 ./scripts/duplicates.sh                # jscpd copy-paste gate, .jscpd.json
@@ -92,5 +92,4 @@ its exit code — don't.
 
 `.github/workflows/ci.yml` (two parallel macOS jobs running these same
 scripts), `release.yml` (tag-driven GitHub Release with generated notes),
-`nightly.yml` (rolling prerelease when main moved), `droid-review.yml`
-(automated PR review; needs the GitHub App + `FACTORY_API_KEY` secret).
+`nightly.yml` (rolling prerelease when main moved).

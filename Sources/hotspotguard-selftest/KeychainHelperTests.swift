@@ -131,4 +131,121 @@ func runKeychainHelperTests() async throws {
             print("  \u{1B}[33m⚠\u{1B}[0m Keychain unavailable, suite skipped: \(error)")
         }
     }
+
+    try await mockKeychainStoreSuite()
+    try await keychainErrorSuite()
+    try await mockPasswordStorageSuite()
+}
+
+@MainActor
+private func mockKeychainStoreSuite() async throws {
+    // MARK: - In-memory mock, for environments without a Keychain
+
+    TestRunner.suite("KeychainHelper — mock store")
+
+    do {
+        try withMockKeychain {
+            let service = "com.yaroslavkv.hotspotguard.selftest.mock.\(UUID().uuidString)"
+
+            TestRunner.expect(
+                try KeychainHelper.password(service: service, account: "ghost") == nil,
+                "a missing mock item reads as nil")
+
+            try KeychainHelper.setPassword("mock-secret", service: service, account: "Home")
+            TestRunner.expectEqual(
+                try KeychainHelper.password(service: service, account: "Home"), "mock-secret",
+                "a mock item round-trips")
+            TestRunner.expect(
+                KeychainHelper.hasPassword(service: service, account: "Home"),
+                "a mock item reports presence")
+
+            // Empty means deletion, same as the real store.
+            try KeychainHelper.setPassword("", service: service, account: "Home")
+            TestRunner.expect(
+                !KeychainHelper.hasPassword(service: service, account: "Home"),
+                "an empty mock password deletes the item")
+
+            try KeychainHelper.setPassword("a", service: service, account: "A")
+            try KeychainHelper.setPassword("b", service: service, account: "B")
+            let accounts = try KeychainHelper.allAccounts(service: service)
+            TestRunner.expectEqual(Set(accounts), ["A", "B"], "allAccounts lists mock items")
+            let pairs = try KeychainHelper.allAccountsAndPasswords(service: service)
+            TestRunner.expectEqual(pairs, ["A": "a", "B": "b"], "allAccountsAndPasswords reads mock items")
+
+            try KeychainHelper.deletePassword(service: service, account: "A")
+            TestRunner.expect(
+                try KeychainHelper.password(service: service, account: "A") == nil,
+                "a deleted mock item is gone")
+            TestRunner.expect(
+                (try? KeychainHelper.deletePassword(service: service, account: "nobody")) != nil,
+                "deleting a missing mock item is not an error")
+        }
+    } catch {
+        TestRunner.expect(false, "mock store must never throw here: \(error)")
+    }
+}
+
+@MainActor
+private func keychainErrorSuite() async throws {
+    TestRunner.suite("KeychainError descriptions")
+
+    do {
+        TestRunner.expectEqual(
+            KeychainError.malformedData.errorDescription,
+            "Keychain item could not be decoded as UTF-8 text.",
+            "malformed data explains itself")
+        let statusDescription = KeychainError.unexpectedStatus(-50).errorDescription ?? ""
+        TestRunner.expect(
+            statusDescription.contains("-50"),
+            "an unexpected status names the status code")
+    }
+
+    do {
+        TestRunner.expectEqual(
+            KeychainHelper.defaultService, "com.yaroslavkv.hotspotguard",
+            "falls back to the bundle-less service name under swift run")
+        TestRunner.expect(
+            !KeychainHelper.hasPassword(
+                service: "com.yaroslavkv.hotspotguard.selftest.absent", account: "nobody"),
+            "hasPassword is false when the lookup fails")
+    }
+}
+
+@MainActor
+private func mockPasswordStorageSuite() async throws {
+    TestRunner.suite("KeychainPasswordStorage — mock store")
+
+    do {
+        try withMockKeychain {
+            let service = "com.yaroslavkv.hotspotguard.selftest.mockstore.\(UUID().uuidString)"
+            let storage = KeychainPasswordStorage(service: service)
+
+            TestRunner.expect(
+                try storage.password(for: "Unknown") == nil,
+                "a missing entry reads as nil")
+
+            try storage.setPassword("s3cr3t", for: "Home")
+            TestRunner.expectEqual(
+                try storage.password(for: "Home"), "s3cr3t",
+                "a stored password reads back")
+
+            // A legacy spelling resolves through the raw item underneath.
+            let legacy = "Mock Legacy\u{2019}s iPhone"
+            try KeychainHelper.setPassword("legacy-mock", service: service, account: legacy)
+            TestRunner.expectEqual(
+                try storage.password(for: legacy), "legacy-mock",
+                "an un-normalised item is found through the fallback")
+
+            let migrated = try storage.migrateToNormalizedKeys()
+            TestRunner.expectEqual(migrated, [legacy], "migration rewrites the legacy spelling")
+            TestRunner.expectEqual(
+                try storage.password(for: SSIDKey.normalize(legacy)), "legacy-mock",
+                "the password survives the rewrite")
+            TestRunner.expect(
+                try storage.migrateToNormalizedKeys().isEmpty,
+                "a second migration changes nothing")
+        }
+    } catch {
+        TestRunner.expect(false, "mock storage must never throw here: \(error)")
+    }
 }

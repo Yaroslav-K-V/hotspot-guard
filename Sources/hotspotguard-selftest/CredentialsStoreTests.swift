@@ -93,4 +93,22 @@ func runCredentialsStoreTests() async throws {
         store.invalidateCache()
         TestRunner.expect(!store.hasPassword(for: "Cached"), "invalidating re-reads storage")
     }
+
+    do {
+        let storage = InMemoryPasswordStorage()
+        let store = CredentialsStore(storage: storage)
+
+        TestRunner.expect(!store.hasAnyUnsavedDraft, "starts with no draft at all")
+        store.beginEditing("Home")
+        TestRunner.expect(!store.hasUnsavedDraft(for: "Other"), "a draft is per-network")
+        TestRunner.expect(!store.isEditing("Other"), "editing aims at one network")
+        TestRunner.expect(store.isEditing("Home"), "editing tracks the network")
+
+        storage.failWrites(true)
+        let message = store.forget("Home")
+        TestRunner.expect(store.lastError != nil, "a failing forget records the error")
+        TestRunner.expect(
+            message?.contains("Could not remove") == true, "a failing forget says so")
+        storage.failWrites(false)
+    }
 }

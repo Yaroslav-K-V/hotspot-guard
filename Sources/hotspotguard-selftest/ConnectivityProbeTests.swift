@@ -67,5 +67,9 @@ func runConnectivityProbeTests() async throws {
         // without XCTest's URLProtocol/Mock infrastructure, we verify the presence of the API boundary.
         let _ = TCPConnectivityProbe(endpoints: []) // empty forces failure to fallback, if not intercepted
         TestRunner.expect(true, "HTTP fallback successfully passed static verification")
+
+        // The default construction path (real detector, real connector) must
+        // at least build without performing any I/O.
+        let _ = TCPConnectivityProbe()
     }
 }

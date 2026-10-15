@@ -16,6 +16,7 @@ final class AppModel {
     let log: EventLog
     let credentials: CredentialsStore
     let manager: ConnectionManager
+    let analytics: AnalyticsStore
     let launchAtLogin: LaunchAtLoginController
     let flags: FeatureFlags
     @ObservationIgnored let location: LocationAuthorization
@@ -29,11 +30,13 @@ final class AppModel {
         let log = EventLog()
         let credentials = CredentialsStore()
         let flags = FeatureFlags()
+        let analytics = AnalyticsStore()
 
         self.settings = settings
         self.log = log
         self.credentials = credentials
         self.flags = flags
+        self.analytics = analytics
         self.launchAtLogin = LaunchAtLoginController()
         self.location = LocationAuthorization()
         self.manager = ConnectionManager(
@@ -47,7 +50,8 @@ final class AppModel {
             // AppKit lives here, not in Core — this is the whole reason
             // SleepWakeObserver is a protocol.
             sleepObserver: WorkspaceSleepWakeObserver(),
-            passwordProvider: { [credentials] ssid in credentials.password(for: ssid) }
+            passwordProvider: { [credentials] ssid in credentials.password(for: ssid) },
+            analytics: analytics
         )
 
         // Startup work must not wait for the user to click the icon.
@@ -207,7 +211,7 @@ struct HotspotGuardApp: App {
         // `connectionHistory` off, MenuBarView shows no "History…" button and
         // this window is unreachable.
         Window("HotspotGuard History", id: HistoryWindow.id) {
-            HistoryView(log: model.log)
+            HistoryView(log: model.log, analytics: model.analytics)
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 460, height: 420)

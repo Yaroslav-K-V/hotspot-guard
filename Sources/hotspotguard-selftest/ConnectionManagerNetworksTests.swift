@@ -7,6 +7,8 @@ func runConnectionManagerNetworksTests() async throws {
     try await latencySuite()
     try await networkPrioritySuite()
     try await summariseSuite()
+    try await offAirSkipSuite()
+    try await reconnectPortalSuite()
 }
 
 @MainActor
@@ -238,5 +240,69 @@ private func summariseSuite() async throws {
         TestRunner.expect(mixed.contains("None of 3"), "says how many were considered")
         TestRunner.expect(mixed.contains("not on air: A, B"), "separates absent networks")
         TestRunner.expect(mixed.contains("no password: C"), "separates unusable ones")
+    }
+}
+
+@MainActor
+private func offAirSkipSuite() async throws {
+    // MARK: - Off-air skip
+
+    TestRunner.suite("ConnectionManager — off-air skip")
+
+    do {
+        // The first scan comes back empty-handed: the second network is
+        // filtered against that answer instead of paying for its own scan.
+        let wifi = FakeWiFiController(currentSSID: nil)
+        wifi.setAssociateError(WiFiError.networkNotFound("A", visible: []))
+        wifi.setFailureCount(1)
+        let spy = SpyAnalyticsRecorder()
+        let (manager, log) = makeMultiManager(
+            networks: ["A", "B"],
+            passwords: ["A": "a", "B": "b"],
+            probe: ScriptedProbe([false]),
+            wifi: wifi,
+            analytics: spy,
+            suite: "selftest.offair"
+        )
+
+        await manager.tick()
+
+        TestRunner.expectEqual(wifi.associateCallCount, 1, "scans once, then filters")
+        TestRunner.expect(
+            log.events.contains { $0.message.contains("not on air: A, B") },
+            "reports both networks as absent")
+        TestRunner.expectEqual(manager.state, .disconnected, "ends disconnected")
+        TestRunner.expectEqual(
+            spy.attempts.map(\.outcome), [.notFound],
+            "an absent network is recorded as an attempt")
+    }
+}
+
+@MainActor
+private func reconnectPortalSuite() async throws {
+    // MARK: - Portal found mid-reconnect
+
+    TestRunner.suite("ConnectionManager — portal via reconnect")
+
+    do {
+        // The check fails, the join works, but a portal intercepts: joining
+        // must count as an attempt, and the state must hold for sign-in.
+        let wifi = FakeWiFiController(currentSSID: nil)
+        let notifier = FakeNotificationPresenter()
+        let spy = SpyAnalyticsRecorder()
+        let (manager, _, _) = makeManager(
+            probe: ScriptedProbe([.offline, .portal()]),
+            wifi: wifi, notifier: notifier, analytics: spy,
+            suite: "selftest.reconnect.portal"
+        )
+
+        await manager.tick()
+
+        TestRunner.expectEqual(manager.state, .captivePortal, "holds for sign-in")
+        TestRunner.expectEqual(wifi.associateCallCount, 1, "joined once")
+        TestRunner.expectEqual(
+            spy.attempts.map(\.outcome), [.captivePortal],
+            "a portal join is recorded as an attempt")
+        TestRunner.expectEqual(notifier.count, 1, "asks for sign-in once")
     }
 }

@@ -60,4 +60,19 @@ public enum Defaults {
     /// Chosen as the point where interactive work (SSH, calls) starts to feel
     /// wrong.
     public static let degradedLatencyMilliseconds = 300
+
+    // MARK: - Analytics
+
+    /// How many samples the analytics store keeps.
+    ///
+    /// At a 10s check interval
+    /// this is roughly two weeks of history; older entries are pruned first
+    /// by age (see below), so the cap only binds for sub-minute intervals.
+    public static let analyticsSampleCap = 5000
+
+    /// How many reconnect attempts the analytics store keeps.
+    public static let analyticsAttemptCap = 1000
+
+    /// Samples and attempts older than this are dropped on record and load.
+    public static let analyticsRetentionDays = 30
 }

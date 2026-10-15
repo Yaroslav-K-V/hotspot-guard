@@ -21,4 +21,13 @@ func runEventLogTests() async throws {
         log.clear()
         TestRunner.expectEqual(log.events.count, 0, "clears")
     }
+
+    do {
+        // Pin the shared formatter to UTC: the system zone differs between
+        // machines, and this asserts the shape, not the zone.
+        DateFormatter.timeFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        let event = LogEvent(
+            timestamp: Date(timeIntervalSince1970: 3_600), level: .info, message: "x")
+        TestRunner.expectEqual(event.formattedTime, "01:00:00", "formats time without the date")
+    }
 }

@@ -27,12 +27,20 @@ public enum KeychainError: LocalizedError, Equatable {
 /// signature, so rebuilding the app changes its identity and the system will
 /// prompt for permission again. Signing with a stable identity avoids this.
 public enum KeychainHelper {
-    /// In-memory mock keychain store when `HOTSPOTGUARD_DEV_MOCK_KEYCHAIN=1` is set.
+    /// In-memory mock keychain store.
+    ///
+    /// Engaged by `HOTSPOTGUARD_DEV_MOCK_KEYCHAIN=1` in debug builds only —
+    /// `isMockEnabled` is hardcoded off in release, so no environment
+    /// variable can silently detach the shipped app from the real Keychain.
     private static var mockStore: [String: [String: String]] = [:]
     private static let mockLock = NSLock()
 
     private static var isMockEnabled: Bool {
-        ProcessInfo.processInfo.environment["HOTSPOTGUARD_DEV_MOCK_KEYCHAIN"] == "1"
+        #if DEBUG
+            ProcessInfo.processInfo.environment["HOTSPOTGUARD_DEV_MOCK_KEYCHAIN"] == "1"
+        #else
+            false
+        #endif
     }
 
     /// Default service name.

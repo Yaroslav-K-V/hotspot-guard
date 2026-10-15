@@ -111,6 +111,10 @@ public final class ConnectionManager {
     @ObservationIgnored private let passwordProvider: @MainActor (String) -> String?
     @ObservationIgnored private let probeTimeout: TimeInterval
     @ObservationIgnored private let postAssociationDelay: Duration
+    /// Receives one sample per check plus one attempt per reconnect try.
+    /// `nil` (the default) records nothing — used by every caller that does
+    /// not care about history.
+    @ObservationIgnored private let analytics: (any AnalyticsRecorder)?
 
     @ObservationIgnored private var loopTask: Task<Void, Never>?
     /// Ensures the "could not reconnect" alert fires once per outage, not once
@@ -134,7 +138,8 @@ public final class ConnectionManager {
         sleepObserver: SleepWakeObserver? = nil,
         probeTimeout: TimeInterval = Defaults.probeTimeout,
         postAssociationDelay: Duration = Defaults.postAssociationDelay,
-        passwordProvider: @escaping @MainActor (String) -> String?
+        passwordProvider: @escaping @MainActor (String) -> String?,
+        analytics: (any AnalyticsRecorder)? = nil
     ) {
         self.sleepObserver = sleepObserver
         self.settings = settings
@@ -146,6 +151,7 @@ public final class ConnectionManager {
         self.probeTimeout = probeTimeout
         self.postAssociationDelay = postAssociationDelay
         self.passwordProvider = passwordProvider
+        self.analytics = analytics
     }
 
     // MARK: - Lifecycle
@@ -330,6 +336,13 @@ public final class ConnectionManager {
 
         let result = await probe.check(timeout: probeTimeout)
         recordLatency(result)
+        analytics?.record(
+            sample: AnalyticSample(
+                status: result.status,
+                latencyMilliseconds: result.latencyMilliseconds,
+                ssid: currentSSID
+            )
+        )
 
         switch result.status {
         case .online:
@@ -518,18 +531,24 @@ public final class ConnectionManager {
             let result = await tryConnect(ssid: ssid, password: password, isMultiple: isMultiple)
             switch result {
             case .success(let latency):
+                analytics?.record(
+                    attempt: NetworkAttempt(
+                        ssid: ssid, outcome: .success, latencyMilliseconds: latency))
                 handleReconnectSuccess(ssid: ssid, latency: latency)
                 return
             case .captivePortal:
+                analytics?.record(attempt: NetworkAttempt(ssid: ssid, outcome: .captivePortal))
                 // Joining worked; the network just wants a login. Treating it
                 // as a failure would move on to the next network and abandon a
                 // connection the user can fix in one click.
                 await handleCaptivePortal()
                 return
             case .notFound(let visible):
+                analytics?.record(attempt: NetworkAttempt(ssid: ssid, outcome: .notFound))
                 networksOnAir = Set(visible.map(CoreWLANController.normalize))
                 notOnAir.append(ssid)
             case .failed:
+                analytics?.record(attempt: NetworkAttempt(ssid: ssid, outcome: .failed))
                 continue
             }
         }
