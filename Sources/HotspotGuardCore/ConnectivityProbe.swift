@@ -128,21 +128,25 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
         return finalResult
     }
 
+    private static func makeTCPConnection(host: String, port: NWEndpoint.Port, timeout: TimeInterval) -> NWConnection {
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.connectionTimeout = max(1, Int(timeout.rounded(.up)))
+        tcpOptions.noDelay = true
+
+        return NWConnection(
+            host: NWEndpoint.Host(host),
+            port: port,
+            using: NWParameters(tls: nil, tcp: tcpOptions)
+        )
+    }
+
     private static func connect(
         to endpoint: ProbeEndpoint,
         timeout: TimeInterval
     ) async -> ConnectivityResult {
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { return .offline }
 
-        let tcpOptions = NWProtocolTCP.Options()
-        tcpOptions.connectionTimeout = max(1, Int(timeout.rounded(.up)))
-        tcpOptions.noDelay = true
-
-        let connection = NWConnection(
-            host: NWEndpoint.Host(endpoint.host),
-            port: port,
-            using: NWParameters(tls: nil, tcp: tcpOptions)
-        )
+        let connection = makeTCPConnection(host: endpoint.host, port: port, timeout: timeout)
         let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.probe.\(endpoint.host)", qos: .utility)
 
         // Measured with a monotonic clock: the wall clock can jump backwards
@@ -198,15 +202,7 @@ public struct TCPConnectivityProbe: ConnectivityProbe {
         let host = "captive.apple.com"
         let port = NWEndpoint.Port(rawValue: 80)!
 
-        let tcpOptions = NWProtocolTCP.Options()
-        tcpOptions.connectionTimeout = max(1, Int(timeout.rounded(.up)))
-        tcpOptions.noDelay = true
-
-        let connection = NWConnection(
-            host: NWEndpoint.Host(host),
-            port: port,
-            using: NWParameters(tls: nil, tcp: tcpOptions)
-        )
+        let connection = makeTCPConnection(host: host, port: port, timeout: timeout)
         let queue = DispatchQueue(label: "com.yaroslavkv.hotspotguard.probe.httpfallback", qos: .utility)
 
         let started = ContinuousClock.now
