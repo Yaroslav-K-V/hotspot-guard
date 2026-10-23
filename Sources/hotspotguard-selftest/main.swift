@@ -23,5 +23,6 @@ try await runLocationAuthorizationTests()
 try await runWiFiControllerTests()
 try await runNetworkPathObserverTests()
 try await runAnalyticsTests()
+try await runHotspotNetworkTests()
 
 exit(TestRunner.report())
